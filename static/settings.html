@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>系统设置 - Gemini Polling</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-color: #0d1117;
+      --surface-color: #161b22;
+      --border-color: #30363d;
+      --text-color: #c9d1d9;
+      --text-muted-color: #8b949e;
+      --primary-color: #2f81f7;
+      --primary-hover-color: #1f6feb;
+      --success-color: #238636;
+      --danger-color: #da3633;
+      --warning-color-bg: rgba(247, 189, 47, 0.1);
+      --warning-color-border: #f7bd2f;
+      --font-main: 'Exo 2', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: var(--font-main);
+    }
+
+    .navbar {
+      background-color: var(--surface-color) !important;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .card {
+      background-color: var(--surface-color);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    .card-header, .card-footer {
+      background-color: rgba(0,0,0,0.1);
+      border-color: var(--border-color);
+    }
+    h6 {
+      color: var(--primary-color);
+      font-weight: 600;
+      margin-top: 1.5rem;
+    }
+    hr {
+      border-color: var(--border-color);
+      opacity: 0.5;
+    }
+
+    .btn {
+      border-radius: 6px;
+      transition: all 0.2s ease-in-out;
+      font-weight: 600;
+    }
+    .btn-primary {
+      background-color: var(--primary-color);
+      border-color: var(--primary-color);
+    }
+    .btn-primary:hover {
+      background-color: var(--primary-hover-color);
+      border-color: var(--primary-hover-color);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(47, 129, 247, 0.2);
+    }
+    .btn-outline-danger { color: var(--danger-color); border-color: var(--danger-color); }
+    .btn-outline-danger:hover { color: #fff; background-color: var(--danger-color); }
+
+
+    .form-label { font-weight: 600; color: var(--text-color); }
+    .form-text { color: var(--text-muted-color); font-size: 0.875em; }
+    .form-control, .form-select {
+      background-color: var(--bg-color);
+      border: 1px solid var(--border-color);
+      color: var(--text-color);
+    }
+    .form-control:focus, .form-select:focus {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 0.25rem rgba(47, 129, 247, 0.25);
+    }
+    .form-control::placeholder { color: var(--text-muted-color); }
+
+    .card-footer.bg-warning-subtle {
+      background-color: var(--warning-color-bg) !important;
+      color: var(--warning-color-border) !important;
+      border-top: 1px solid var(--warning-color-border) !important;
+    }
+
+    .toast-container { z-index: 1100; }
+    .toast { background-color: var(--surface-color); border: 1px solid var(--border-color); color: var(--text-color); }
+    .toast-header { background-color: rgba(0,0,0,0.2); border-bottom: 1px solid var(--border-color); color: var(--text-color); }
+    .text-bg-success { background-color: var(--success-color) !important; }
+    .text-bg-danger { background-color: var(--danger-color) !important; }
+    .text-bg-info { background-color: var(--primary-color) !important; }
+
+    .spinner-border { color: var(--primary-color); }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-expand-lg navbar-dark ">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="#"><i class="bi bi-gem me-2"></i> Gemini Polling</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+        <li class="nav-item">
+          <a class="nav-link" href="/admin/admin.html">Key 管理</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link active" aria-current="page" href="/admin/settings.html">系统设置</a>
+        </li>
+      </ul>
+      <button class="btn btn-outline-danger" onclick="logout()">退出登录 <i class="bi bi-box-arrow-right"></i></button>
+    </div>
+  </div>
+</nav>
+
+<!-- Main Content -->
+<div class="container mt-4">
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header">
+          <h5 class="mb-0"><i class="bi bi-gear-wide-connected me-2"></i>系统设置 (.env)</h5>
+        </div>
+        <div class="card-body" id="settings-form-container">
+          <div id="loading-spinner" class="text-center p-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>
+            <p class="mt-2">正在加载配置...</p>
+          </div>
+
+          <form id="settings-form" class="d-none">
+            <h6><i class="bi bi-server"></i> 服务器配置</h6>
+            <hr class="mt-1">
+            <div class="mb-3">
+              <label for="SERVER_PORT" class="form-label">服务端口 (SERVER_PORT)</label>
+              <input type="number" class="form-control" id="SERVER_PORT" required>
+            </div>
+
+            <h6 class="mt-4"><i class="bi bi-arrow-repeat"></i> 轮询策略</h6>
+            <hr class="mt-1">
+            <div class="mb-3">
+              <label for="MAX_RETRIES" class="form-label">最大重试次数 (MAX_RETRIES)</label>
+              <input type="number" class="form-control" id="MAX_RETRIES" required>
+              <div class="form-text">单次请求失败后，尝试使用不同 Key 进行重试的最大次数。</div>
+            </div>
+            <div class="mb-3">
+              <label for="RATE_LIMIT_COOLDOWN" class="form-label">速率限制冷却时间 (秒) (RATE_LIMIT_COOLDOWN)</label>
+              <input type="number" class="form-control" id="RATE_LIMIT_COOLDOWN" required>
+              <div class="form-text">当一个 Key 遇到429错误时，临时禁用的时长（单位：秒）。</div>
+            </div>
+
+            <h6><i class="bi bi-key-fill"></i> API Keys</h6>
+            <hr class="mt-1">
+            <div class="mb-3">
+              <label for="ADMIN_API_KEY" class="form-label">管理后台密钥 (ADMIN_API_KEY)</label>
+              <input type="password" class="form-control" id="ADMIN_API_KEY">
+              <div class="form-text">用于登录管理后台的密钥。如不修改请留空。</div>
+            </div>
+            <div class="mb-3">
+              <label for="POLLING_API_KEY" class="form-label">公共接口密钥 (POLLING_API_KEY)</label>
+              <input type="password" class="form-control" id="POLLING_API_KEY">
+              <div class="form-text">访问 /v1 接口所需的 Bearer Token。如不修改请留空；设置为空值则代表无需认证。</div>
+            </div>
+
+            <h6><i class="bi bi-database-fill"></i> 数据库配置</h6>
+            <hr class="mt-1">
+            <div class="mb-3">
+              <label for="DB_DRIVER" class="form-label">数据库驱动 (DB_DRIVER)</label>
+              <select class="form-select" id="DB_DRIVER">
+                <option value="sqlite3">sqlite3</option>
+                <option value="mysql">mysql</option>
+              </select>
+            </div>
+            <div id="sqlite-config">
+              <div class="mb-3">
+                <label for="SQLITE_PATH" class="form-label">SQLite 数据库路径 (SQLITE_PATH)</label>
+                <input type="text" class="form-control" id="SQLITE_PATH">
+              </div>
+            </div>
+            <div id="mysql-config" class="d-none">
+              <div class="row">
+                <div class="col-md-6 mb-3">
+                  <label for="MYSQL_HOST" class="form-label">MySQL 主机</label>
+                  <input type="text" class="form-control" id="MYSQL_HOST">
+                </div>
+                <div class="col-md-6 mb-3">
+                  <label for="MYSQL_PORT" class="form-label">MySQL 端口</label>
+                  <input type="number" class="form-control" id="MYSQL_PORT">
+                </div>
+              </div>
+              <div class="mb-3">
+                <label for="MYSQL_DBNAME" class="form-label">数据库名</label>
+                <input type="text" class="form-control" id="MYSQL_DBNAME">
+              </div>
+              <div class="mb-3">
+                <label for="MYSQL_USER" class="form-label">用户名</label>
+                <input type="text" class="form-control" id="MYSQL_USER">
+              </div>
+              <div class="mb-3">
+                <label for="MYSQL_PASSWORD" class="form-label">密码</label>
+                <input type="password" class="form-control" id="MYSQL_PASSWORD">
+                <div class="form-text">如果密码未修改，请保持此项为空，以防被意外覆盖。</div>
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100 mt-3">
+              <span id="save-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+              保存更改并热重载
+            </button>
+          </form>
+        </div>
+        <div class="card-footer bg-warning-subtle">
+          <i class="bi bi-exclamation-triangle-fill"></i>
+          <strong>重要提示:</strong> 大部分设置保存后可热重载并立即生效。但 <strong>数据库和端口</strong> 相关设置需要 <strong>手动重启程序</strong> 才能生效。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container position-fixed top-0 end-0 p-3">
+  <div id="app-toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="toast-header">
+      <i class="bi rounded me-2"></i>
+      <strong class="me-auto" id="toast-title">通知</strong>
+      <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+    <div class="toast-body" id="toast-body"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  // JavaScript code remains the same.
+  let adminApiKey = '';
+  let toastInstance = null;
+
+  function logout() {
+    localStorage.removeItem('adminApiKey');
+    window.location.href = '/admin/login.html';
+  }
+
+  function showToast(message, type = 'success') {
+    const toastEl = document.getElementById('app-toast');
+    const toastHeader = toastEl.querySelector('.toast-header');
+    const toastIcon = toastEl.querySelector('.toast-header .bi');
+    document.getElementById('toast-body').textContent = message;
+
+    toastHeader.classList.remove('text-bg-success', 'text-bg-danger', 'text-bg-info');
+    toastIcon.classList.remove('bi-check-circle-fill', 'bi-x-circle-fill', 'bi-info-circle-fill');
+
+    switch(type) {
+      case 'success': toastHeader.classList.add('text-bg-success'); toastIcon.classList.add('bi-check-circle-fill'); break;
+      case 'error': toastHeader.classList.add('text-bg-danger'); toastIcon.classList.add('bi-x-circle-fill'); break;
+      case 'info': toastHeader.classList.add('text-bg-info'); toastIcon.classList.add('bi-info-circle-fill'); break;
+    }
+    toastInstance.show();
+  }
+
+  async function fetchApi(url, options = {}) {
+    const defaultOptions = { headers: { 'Authorization': `Bearer ${adminApiKey}`, 'Content-Type': 'application/json' } };
+    const mergedOptions = { ...defaultOptions, ...options, headers: { ...defaultOptions.headers, ...options.headers } };
+
+    try {
+      const response = await fetch(url, mergedOptions);
+      if (response.status === 401 || response.status === 403) {
+        showToast('认证失败或凭证已过期，请重新登录。', 'error');
+        setTimeout(logout, 2000);
+        throw new Error('认证失败');
+      }
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async function loadSettings() {
+    try {
+      const response = await fetchApi('/api/admin/settings');
+      if (!response.ok) throw new Error('无法加载配置');
+      const settings = await response.json();
+      populateForm(settings);
+      document.getElementById('loading-spinner').classList.add('d-none');
+      document.getElementById('settings-form').classList.remove('d-none');
+    } catch (e) {
+      showToast(e.message, 'error');
+      document.getElementById('loading-spinner').innerHTML = `<p class="text-danger">${e.message}</p>`;
+    }
+  }
+
+  function populateForm(settings) {
+    Object.keys(settings).forEach(key => {
+      const element = document.getElementById(key);
+      if (element) {
+        if (element.type === 'password') {
+          element.placeholder = "已设置，如需修改请输入新值";
+        } else {
+          element.value = settings[key];
+        }
+      }
+    });
+    toggleDatabaseConfig(settings.DB_DRIVER);
+  }
+
+  function toggleDatabaseConfig(driver) {
+    document.getElementById('sqlite-config').classList.toggle('d-none', driver !== 'sqlite3');
+    document.getElementById('mysql-config').classList.toggle('d-none', driver !== 'mysql');
+  }
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    const saveBtn = event.target.querySelector('button[type="submit"]');
+    const spinner = document.getElementById('save-spinner');
+    saveBtn.disabled = true;
+    spinner.classList.remove('d-none');
+
+    const updates = {};
+    const formElements = document.getElementById('settings-form').elements;
+    for (const element of formElements) {
+      if (element.id && element.tagName !== 'BUTTON') {
+        if (element.type === 'password') {
+          if (element.value.trim() !== '') {
+            updates[element.id] = element.value;
+          }
+        } else {
+          updates[element.id] = element.value;
+        }
+      }
+    }
+
+    try {
+      const response = await fetchApi('/api/admin/settings', {
+        method: 'POST',
+        body: JSON.stringify(updates)
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
+      showToast(result.message, 'success');
+
+      Object.values(formElements).forEach(el => {
+        if (el.type === 'password') el.value = '';
+      });
+
+      loadSettings();
+    } catch (e) {
+      showToast(`保存失败: ${e.message}`, 'error');
+    } finally {
+      saveBtn.disabled = false;
+      spinner.classList.add('d-none');
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    adminApiKey = localStorage.getItem('adminApiKey');
+    if (!adminApiKey) {
+      window.location.href = '/admin/login.html';
+      return;
+    }
+    toastInstance = new bootstrap.Toast(document.getElementById('app-toast'));
+    loadSettings();
+    document.getElementById('DB_DRIVER').addEventListener('change', (e) => toggleDatabaseConfig(e.target.value));
+    document.getElementById('settings-form').addEventListener('submit', saveSettings);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,226 @@
+package handler
+
+import (
+	"gemini_polling/config"
+	"gemini_polling/service"
+	"gemini_polling/storage"
+	"github.com/gin-gonic/gin"
+	"log"
+	"net/http"
+	"strconv"
+)
+
+type KeyHandler struct {
+	store         *storage.KeyStore
+	genaiService  *service.GenAIService
+	adminAPIKey   string // 保存 admin key 用于登录验证
+	configManager *config.Manager
+	keyScanner    *service.KeyScanner
+}
+
+// +修改: 更新 NewKeyHandler 的签名
+func NewKeyHandler(store *storage.KeyStore, genaiService *service.GenAIService, manager *config.Manager, scanner *service.KeyScanner) *KeyHandler {
+	return &KeyHandler{
+		store:         store,
+		genaiService:  genaiService,
+		configManager: manager,
+		keyScanner:    scanner, // +新增
+	}
+}
+
+// Login 验证管理员登录
+func (h *KeyHandler) Login(c *gin.Context) {
+	var json struct {
+		APIKey string `json:"api_key" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&json); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// 从管理器获取最新的 Admin Key
+	adminAPIKey := h.configManager.Get().AdminAPIKey
+	if json.APIKey != adminAPIKey {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid admin API key"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Login successful"})
+}
+
+// AddKey 添加单个 Key
+// AddKey 添加单个 Key, 并立即进行验证
+func (h *KeyHandler) AddKey(c *gin.Context) {
+	var json struct {
+		APIKey string `json:"api_key" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&json); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// 1. 先添加到数据库
+	key, err := h.store.Add(json.APIKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add key: " + err.Error()})
+		return
+	}
+	// 2. 立即进行验证
+	log.Printf("新 Key (ID: %d) 已添加，正在进行即时验证...", key.ID)
+	isValid, reason := h.genaiService.ValidateAPIKey(key.Key)
+	if !isValid {
+		log.Printf("新 Key (ID: %d) 未通过验证，已自动禁用。原因: %s", key.ID, reason)
+		h.store.Disable(key.ID, "添加时验证失败: "+reason)
+		// 更新 key 对象的状态以返回给前端
+		key.Enabled = false
+	} else {
+		log.Printf("新 Key (ID: %d) 验证通过。", key.ID)
+	}
+	c.JSON(http.StatusOK, key)
+}
+
+// +新增: ScanAllKeysHandler 用于处理手动扫描请求
+func (h *KeyHandler) ScanAllKeysHandler(c *gin.Context) {
+	// 在后台运行扫描，立即返回响应，避免前端请求超时
+	go h.keyScanner.ScanAllEnabledKeys()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "已启动对所有启用 Key 的后台扫描任务，请稍后查看日志或刷新列表。",
+	})
+}
+
+// BatchAddKeys 批量添加 Keys
+func (h *KeyHandler) BatchAddKeys(c *gin.Context) {
+	var json struct {
+		Keys []string `json:"keys" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&json); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var addedCount, failedCount int
+	var errors []string
+	for _, k := range json.Keys {
+		if k == "" {
+			continue
+		}
+		_, err := h.store.Add(k)
+		if err != nil {
+			failedCount++
+			errors = append(errors, k+": "+err.Error())
+		} else {
+			addedCount++
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "Batch add complete",
+		"added":         addedCount,
+		"failed":        failedCount,
+		"error_details": errors,
+	})
+}
+
+// CheckSingleKey 校验单个指定的 Key
+func (h *KeyHandler) CheckSingleKey(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		return
+	}
+	key, err := h.store.FindByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Key not found"})
+		return
+	}
+	isValid, reason := h.genaiService.ValidateAPIKey(key.Key)
+	// 如果校验结果与当前状态不符，则更新数据库
+	if key.Enabled != isValid {
+		log.Printf("Key ID %d status changed to %v based on validation. Reason: %s", id, isValid, reason)
+		h.store.SetEnabled(uint(id), isValid)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"is_valid": isValid,
+		"reason":   reason,
+	})
+}
+
+// ListKeys 列出所有 Key (支持分页和过滤)
+func (h *KeyHandler) ListKeys(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
+	status := c.DefaultQuery("status", "enabled") // 默认显示启用的
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	keys, total, err := h.store.ListKeys(page, pageSize, status)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list keys: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"keys":        keys,
+		"total_count": total,
+		"page":        page,
+		"page_size":   pageSize,
+	})
+}
+
+// BatchDeleteKeys 批量删除 Keys
+func (h *KeyHandler) BatchDeleteKeys(c *gin.Context) {
+	var json struct {
+		IDs []uint `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&json); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	deletedCount, err := h.store.BatchDelete(json.IDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete keys: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Batch delete complete",
+		"deleted": deletedCount,
+	})
+}
+
+func (h *KeyHandler) setKeyStatus(c *gin.Context, enabled bool) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		return
+	}
+
+	if err := h.store.SetEnabled(uint(id), enabled); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update key status: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "id": id, "enabled": enabled})
+}
+
+func (h *KeyHandler) ActivateKey(c *gin.Context) {
+	h.setKeyStatus(c, true)
+}
+
+func (h *KeyHandler) DeactivateKey(c *gin.Context) {
+	h.setKeyStatus(c, false)
+}
+
+func (h *KeyHandler) DeleteKey(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		return
+	}
+
+	if err := h.store.Delete(uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete key: " + err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
