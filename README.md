@@ -103,10 +103,10 @@ docker run -d \
 go mod tidy
 
 # 编译项目
-go build -o gemini-proxy
+go build -o gemini-polling
 
 # 运行程序
-./gemini-proxy
+./gemini-polling
 ```
 
 程序启动后，您会看到类似以下的输出：

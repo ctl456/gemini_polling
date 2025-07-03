@@ -9,6 +9,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	_ "modernc.org/sqlite" // 添加这行导入纯 Go SQLite 驱动
 )
 
 func InitDB(cfg *config.Config) (*gorm.DB, error) {
