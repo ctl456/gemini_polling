@@ -88,10 +88,9 @@ MYSQL_PASSWORD=your_mysql_password
 docker build -t gemini-polling .
 ```
 ```bash
-docker run -d \
-  --name gemini-polling-container \
-  -p 8080:8080 \
-  -v ./data.db:/app/data.db \
+docker run -d --name gemini-app -p 8080:8080 \
+  -v $(pwd)/data:/app/data \
+  --restart always \
   gemini-polling
 ```
 

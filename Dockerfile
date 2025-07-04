@@ -48,6 +48,8 @@ COPY .env ./.env
 # 这只是元数据，实际端口映射在 `docker run` 或 `docker-compose` 中完成
 EXPOSE 8080
 
+VOLUME /app/data
+
 # 容器启动时运行的命令
 # 程序会读取同目录下的 .env 和 static 文件夹
 ENTRYPOINT ["/app/gemini-polling"]
