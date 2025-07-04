@@ -2,6 +2,9 @@
 # 使用官方的 Go 镜像作为构建环境
 FROM golang:1.23-alpine3.21 AS builder
 
+# 安装 SQLite 开发依赖
+RUN apk add --no-cache gcc musl-dev
+
 # 设置工作目录
 WORKDIR /app
 
@@ -20,9 +23,8 @@ RUN go mod download
 COPY . .
 
 # 编译应用
-# CGO_ENABLED=0 是为了构建一个静态链接的二进制文件，不依赖 C 库
 # -o /app/gemini-polling 指定输出文件
-RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /app/gemini-polling .
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /app/gemini-polling .
 
 # --- Stage 2: Final ---
 # 使用一个非常小的基础镜像，比如 alpine
