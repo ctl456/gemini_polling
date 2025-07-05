@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"gemini_polling/model" // <-- 注意导入路径的变化
 	"log"
 
@@ -27,9 +28,8 @@ func (s *KeyStore) Add(apiKeyVal string) (*model.APIKey, error) {
 // FindByKey 仅用于用户鉴权，检查用户提供的key是否存在且有效
 func (s *KeyStore) FindByKey(apiKeyVal string) (*model.APIKey, error) {
 	var key model.APIKey
-	// 注意，这里我们假设用户鉴权的key和后台轮询的key是同一批
-	// 这在很多代理中是常见做法。如果用户key是独立的，需要另一张表。
-	result := s.db.Where("key = ? AND enabled = ?", apiKeyVal, true).First(&key)
+	// 同样，在这里也需要将 key 用反引号包围
+	result := s.db.Where("`key` = ? AND enabled = ?", apiKeyVal, true).First(&key)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -142,4 +142,36 @@ func (s *KeyStore) GetAllEnabledKeys() ([]model.APIKey, error) {
 		return nil, err
 	}
 	return keys, nil
+}
+
+func (s *KeyStore) AddMultiple(keys []string) (addedCount int, skippedCount int, err error) {
+	if len(keys) == 0 {
+		return 0, 0, nil
+	}
+	// 1. 查询这批 keys 中哪些已经存在于数据库
+	var existingKeys []string
+	if err := s.db.Model(&model.APIKey{}).Select("`key`").Where("`key` IN ?", keys).Find(&existingKeys).Error; err != nil {
+		return 0, 0, fmt.Errorf("查询已存在的key时出错: %w", err)
+	}
+	// 2. 使用 map 快速查找已存在的 key
+	existingMap := make(map[string]bool)
+	for _, k := range existingKeys {
+		existingMap[k] = true
+	}
+	skippedCount = len(existingMap)
+	// 3. 准备要插入的新 key 列表
+	var keysToInsert []*model.APIKey
+	for _, k := range keys {
+		if !existingMap[k] {
+			keysToInsert = append(keysToInsert, &model.APIKey{Key: k, Enabled: true})
+		}
+	}
+	// 4. 如果有新 key 需要插入，则执行批量插入
+	if len(keysToInsert) > 0 {
+		if result := s.db.Create(&keysToInsert); result.Error != nil {
+			return 0, skippedCount, fmt.Errorf("批量插入新key时出错: %w", result.Error)
+		}
+		addedCount = int(len(keysToInsert))
+	}
+	return addedCount, skippedCount, nil
 }

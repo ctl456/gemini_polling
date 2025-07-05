@@ -243,7 +243,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // JavaScript code remains the same as it's robust and doesn't need changes.
     // --- State & Config ---
     let adminApiKey = '';
     const API_BASE_URL = '/api/admin/keys';
@@ -360,8 +359,10 @@
         keys.forEach(key => {
             const tr = document.createElement('tr');
             tr.id = `key-row-${key.id}`;
+            // ================== FIX IS HERE ==================
+            // Added 'key-checkbox' class to the input element
             tr.innerHTML = `
-                <td class="text-center"><input class="form-check-input" type="checkbox" data-id="${key.id}"></td>
+                <td class="text-center"><input class="form-check-input key-checkbox" type="checkbox" data-id="${key.id}"></td>
                 <td>${key.id}</td>
                 <td class="key-text">${maskKey(key.key)}</td>
                 <td class="text-center"><span class="badge rounded-pill ${key.enabled ? 'text-bg-success' : 'text-bg-danger'}">${key.enabled ? '已启用' : '已禁用'}</span></td>
@@ -374,6 +375,7 @@
                     </button>
                 </td>
             `;
+            // =================================================
             tbody.appendChild(tr);
         });
     }
@@ -388,13 +390,71 @@
         }
         document.getElementById('pagination-nav').classList.remove('d-none');
 
-        for (let i = 1; i <= totalPages; i++) {
+        // Logic for creating pagination items (previous, pages, next)
+        const createPageItem = (text, page, isDisabled = false, isActive = false) => {
             const li = document.createElement('li');
-            li.className = `page-item ${i === currentPage ? 'active' : ''}`;
-            li.innerHTML = `<a class="page-link" href="#" onclick="goToPage(${i})">${i}</a>`;
-            paginationUl.appendChild(li);
+            li.className = `page-item ${isDisabled ? 'disabled' : ''} ${isActive ? 'active' : ''}`;
+            const a = document.createElement('a');
+            a.className = 'page-link';
+            a.href = '#';
+            a.innerHTML = text;
+            if (!isDisabled) {
+                a.onclick = (e) => {
+                    e.preventDefault();
+                    goToPage(page);
+                };
+            }
+            li.appendChild(a);
+            return li;
+        };
+
+        // Previous button
+        paginationUl.appendChild(createPageItem('&laquo;', currentPage - 1, currentPage === 1));
+
+        // Page numbers
+        // This logic creates a compact pagination like: 1 ... 5 6 7 ... 12
+        const maxPagesToShow = 5;
+        let startPage, endPage;
+        if (totalPages <= maxPagesToShow) {
+            startPage = 1;
+            endPage = totalPages;
+        } else {
+            const maxPagesBeforeCurrent = Math.floor(maxPagesToShow / 2);
+            const maxPagesAfterCurrent = Math.ceil(maxPagesToShow / 2) - 1;
+            if (currentPage <= maxPagesBeforeCurrent) {
+                startPage = 1;
+                endPage = maxPagesToShow;
+            } else if (currentPage + maxPagesAfterCurrent >= totalPages) {
+                startPage = totalPages - maxPagesToShow + 1;
+                endPage = totalPages;
+            } else {
+                startPage = currentPage - maxPagesBeforeCurrent;
+                endPage = currentPage + maxPagesAfterCurrent;
+            }
         }
+
+        if (startPage > 1) {
+            paginationUl.appendChild(createPageItem('1', 1));
+            if (startPage > 2) {
+                paginationUl.appendChild(createPageItem('...', 0, true));
+            }
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            paginationUl.appendChild(createPageItem(i, i, false, i === currentPage));
+        }
+
+        if (endPage < totalPages) {
+            if (endPage < totalPages -1) {
+                paginationUl.appendChild(createPageItem('...', 0, true));
+            }
+            paginationUl.appendChild(createPageItem(totalPages, totalPages));
+        }
+
+        // Next button
+        paginationUl.appendChild(createPageItem('&raquo;', currentPage + 1, currentPage === totalPages));
     }
+
 
     // --- UI Actions & Event Handlers ---
     function changeTab(status) {
@@ -421,22 +481,39 @@
     }
 
     // --- API Call Functions ---
-    // Single add function is removed as per request.
-
     async function batchAddKeys() {
         const textarea = document.getElementById('batch-keys-textarea');
+        // 1. 和以前一样，获取、清理 key
         const keys = textarea.value.split('\n').map(k => k.trim()).filter(k => k);
-        if (keys.length === 0) return showToast('没有有效的 Key 可供添加', 'error');
 
+        // 2.【新增】使用 Set 对用户输入进行去重
+        const uniqueKeys = [...new Set(keys)];
+        if (uniqueKeys.length === 0) {
+            showToast('没有有效的 Key 可供添加', 'info');
+            return;
+        }
+        const addBtn = document.querySelector('#batch-keys-textarea + button');
+        addBtn.disabled = true;
         try {
-            const response = await fetchApi(`${API_BASE_URL}/batch-add`, { method: 'POST', body: JSON.stringify({ keys }) });
+            // 3. 发送去重后的 uniqueKeys
+            const response = await fetchApi(`${API_BASE_URL}/batch-add`, {
+                method: 'POST',
+                body: JSON.stringify({ keys: uniqueKeys })
+            });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '批量添加失败');
-            showToast(`批量添加完成: ${result.added} 成功, ${result.failed} 失败.`, 'success');
+
+            // 4.【修改】更新成功提示，显示新增和已存在/跳过的数量
+            showToast(`批量添加完成: ${result.added} 新增, ${result.skipped} 已存在/跳过.`, 'success');
+
             textarea.value = '';
-            if (currentStatusTab === 'enabled') fetchKeys();
+            if (currentStatusTab === 'enabled') {
+                await fetchKeys();
+            }
         } catch (error) {
             showToast(`批量添加失败: ${error.message}`, 'error');
+        } finally {
+            addBtn.disabled = false;
         }
     }
 
@@ -450,12 +527,14 @@
             const response = await fetchApi(`${API_BASE_URL}/${id}/check`, { method: 'POST' });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || `校验失败 (HTTP ${response.status})`);
-            const message = result.is_valid ? `Key ${id} 有效.` : `Key ${id} 无效.`;
+
+            const message = result.is_valid ? `Key ${id} 有效.` : `Key ${id} 无效. 原因: ${result.reason}`;
             showToast(message, result.is_valid ? 'success' : 'error');
-            fetchKeys();
+            fetchKeys(); // Refresh the list to show updated status
         } catch (error) {
             showToast(`校验Key ${id} 失败: ${error.message}`, 'error');
         } finally {
+            // Re-find the button and icon after potential re-render from fetchKeys()
             const stillExistsButton = document.querySelector(`#key-row-${id} .btn-outline-info`);
             if (stillExistsButton) {
                 stillExistsButton.disabled = false;
@@ -467,18 +546,22 @@
 
     async function checkSelectedKeys() {
         const ids = getSelectedIds();
-        if (ids.length === 0) return showToast('请先选择要校验的 Key', 'error');
+        if (ids.length === 0) {
+            showToast('请先选择要校验的 Key', 'error');
+            return;
+        }
 
         showToast(`开始批量校验 ${ids.length} 个 Key...`, 'info');
         const checkBtn = document.getElementById('check-selected-btn');
         checkBtn.disabled = true;
 
-        await Promise.all(ids.map(id => {
+        for (const id of ids) {
             const row = document.getElementById(`key-row-${id}`);
             const button = row ? row.querySelector('.btn-outline-info') : null;
-            if (button) return checkSingleKey(id, button).catch(err => console.error(`校验 ${id} 出错:`, err));
-            return Promise.resolve();
-        }));
+            if (button) {
+                await checkSingleKey(id, button).catch(err => console.error(`校验 ${id} 出错:`, err));
+            }
+        }
 
         showToast('所有选中 Key 校验完成。列表已自动刷新。', 'success');
         checkBtn.disabled = false;
@@ -488,8 +571,15 @@
         if (!confirm(`确定要删除 ID 为 ${id} 的 Key 吗？`)) return;
         try {
             const response = await fetchApi(`${API_BASE_URL}/${id}`, { method: 'DELETE' });
-            if (!response.ok && response.status !== 204) throw new Error((await response.json()).error || '删除失败');
+            if (!response.ok && response.status !== 204) {
+                const errorData = await response.json().catch(() => ({error: '删除失败'}));
+                throw new Error(errorData.error);
+            }
             showToast(`Key ID ${id} 已成功删除！`, 'success');
+            // Check if it was the last item on the page
+            if (currentPage > 1 && document.querySelectorAll('#keys-table-body tr').length === 1) {
+                currentPage--;
+            }
             fetchKeys();
         } catch(error) {
             showToast(`删除失败: ${error.message}`, 'error');
@@ -498,17 +588,34 @@
 
     async function deleteSelectedKeys() {
         const ids = getSelectedIds();
-        if (ids.length === 0) return showToast('请先选择要删除的 Key', 'error');
+        if (ids.length === 0) {
+            showToast('请先选择要删除的 Key', 'error');
+            return;
+        }
         if (!confirm(`确定要删除选中的 ${ids.length} 个 Key 吗？`)) return;
+
+        const deleteBtn = document.getElementById('delete-selected-btn');
+        deleteBtn.disabled = true;
 
         try {
             const response = await fetchApi(`${API_BASE_URL}/batch-delete`, { method: 'POST', body: JSON.stringify({ ids }) });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '批量删除失败');
             showToast(`成功删除 ${result.deleted} 个 Key`, 'success');
+
+            // Complex logic to decide if we need to go to previous page
+            const totalPagesBeforeDelete = Math.ceil(totalItems / pageSize);
+            const newTotalItems = totalItems - result.deleted;
+            const newTotalPages = Math.ceil(newTotalItems / pageSize) || 1;
+            if (currentPage > newTotalPages) {
+                currentPage = newTotalPages;
+            }
+
             fetchKeys();
         } catch(error) {
             showToast(`批量删除失败: ${error.message}`, 'error');
+        } finally {
+            deleteBtn.disabled = false;
         }
     }
 

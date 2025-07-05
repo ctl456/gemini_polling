@@ -95,27 +95,27 @@ func (h *KeyHandler) BatchAddKeys(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	var addedCount, failedCount int
-	var errors []string
-	for _, k := range json.Keys {
-		if k == "" {
-			continue
-		}
-		_, err := h.store.Add(k)
-		if err != nil {
-			failedCount++
-			errors = append(errors, k+": "+err.Error())
-		} else {
-			addedCount++
-		}
+	// 前端已经做了一次去重，后端逻辑直接处理即可
+	if len(json.Keys) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "没有提供有效的 Key",
+			"added":   0,
+			"skipped": 0,
+		})
+		return
 	}
-
+	// 调用新的、更智能的存储方法
+	added, skipped, err := h.store.AddMultiple(json.Keys)
+	if err != nil {
+		log.Printf("批量添加 Keys 失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "批量添加时发生数据库错误: " + err.Error()})
+		return
+	}
+	// 返回新的响应格式
 	c.JSON(http.StatusOK, gin.H{
-		"message":       "Batch add complete",
-		"added":         addedCount,
-		"failed":        failedCount,
-		"error_details": errors,
+		"message": "批量添加完成",
+		"added":   added,
+		"skipped": skipped,
 	})
 }
 
