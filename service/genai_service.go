@@ -187,6 +187,85 @@ RetryLoop:
 	return errors.New("所有 API Key 均尝试失败，但未捕获到具体错误")
 }
 
+// =================================================================
+// +++ 新增: 处理非流式请求的函数 +++
+// =================================================================
+// NonStreamChat 处理非流式请求，并返回一个完整的响应体或错误
+func (s *GenAIService) NonStreamChat(ctx context.Context, req *model.ChatCompletionRequest) (interface{}, error) {
+	req.Stream = false // 确保 stream 标志位为 false
+	reqBodyBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求体失败: %w", err)
+	}
+	maxRetries := s.configManager.Get().MaxRetries
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		activeKey, err := s.keyStore.GetNextActiveKey()
+		if err != nil {
+			return nil, fmt.Errorf("无法获取可用的 API Key: %w", err)
+		}
+		if s.isKeyRateLimited(activeKey.ID) {
+			log.Printf("尝试使用 Key ID %d, 但其正在冷却中，跳过...", activeKey.ID)
+			lastErr = fmt.Errorf("key ID %d is rate limited", activeKey.ID)
+			continue
+		}
+		log.Printf("第 %d 次尝试 (非流式), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, req.Model)
+		const url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBodyBytes))
+		if err != nil {
+			lastErr = fmt.Errorf("创建 HTTP 请求失败: %w", err)
+			continue
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+activeKey.Key)
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := s.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("请求 Google API 失败 (Key ID: %d): %w", activeKey.ID, err)
+			log.Println(lastErr)
+			continue
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("读取响应体失败: %w", err)
+			log.Println(lastErr)
+			continue
+		}
+		// 如果请求成功，直接将Google返回的OpenAI兼容格式JSON转发
+		if resp.StatusCode == http.StatusOK {
+			log.Printf("非流式请求成功 (Key ID: %d)", activeKey.ID)
+			var successResp model.OpenAICompletionResponse
+			if err := json.Unmarshal(body, &successResp); err != nil {
+				// 如果Google返回的成功响应不是我们预期的格式，这是一个严重问题
+				return nil, fmt.Errorf("解析上游成功响应失败: %w", err)
+			}
+			return &successResp, nil
+		}
+
+		// 如果上游API返回错误
+		errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(body))
+		lastErr = errors.New(errorMsg)
+		log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			s.temporaryDisableKey(activeKey.ID, errorMsg)
+		} else if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			s.keyStore.Disable(activeKey.ID, errorMsg)
+		}
+		// 其他错误（如5xx）则重试
+		// 尝试解析上游的错误信息，并以标准格式返回
+		var errResp model.OpenAIErrorResponse
+		if json.Unmarshal(body, &errResp) == nil {
+			// 如果能解析成标准错误格式，后续重试失败时就用这个错误
+			// （注意：Google的错误格式可能不完全匹配，这里是尽力而为）
+		}
+	}
+	log.Printf("所有 %d 次重试均失败。", maxRetries)
+	if lastErr != nil {
+		return nil, fmt.Errorf("所有 API Key 均尝试失败，最后一次错误: %w", lastErr)
+	}
+	return nil, errors.New("所有 API Key 均尝试失败，但未捕获到具体错误")
+}
+
 // ListOpenAICompatibleModels 和 ValidateAPIKey 保持不变...
 func (s *GenAIService) ListOpenAICompatibleModels(ctx context.Context) ([]byte, int, error) {
 	// 1. 获取一个可用的 API Key
