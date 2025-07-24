@@ -117,11 +117,10 @@ func (h *ChatHandler) handleNonStream(c *gin.Context, req *model.ChatCompletionR
 		})
 		return
 	}
-	// gpt-3.5-turbo-0125
+
 	// 根据响应类型返回不同的结果
 	switch res := response.(type) {
 	case *model.OpenAICompletionResponse:
-		// res.Model="gpt-3.5-turbo-0125"
 		c.JSON(http.StatusOK, res)
 	case *model.OpenAIErrorResponse:
 		// 这里可以根据上游返回的错误类型来决定HTTP状态码，为简化暂用500

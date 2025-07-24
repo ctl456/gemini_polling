@@ -79,10 +79,11 @@ type CompletionChoice struct {
 }
 
 // Usage 包含了本次请求的token使用量统计
+// model/openai.go L:82 - 修改后
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json::"total_tokens"`
+	TotalTokens      int `json:"total_tokens"` // 修正
 }
 
 // ChatCompletionStreamResponse 是流式响应的结构

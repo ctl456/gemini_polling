@@ -71,7 +71,7 @@ func main() {
 	// 中间件现在需要动态获取配置
 	v1.Use(middleware.PollingAuthMiddleware(configManager))
 	{
-		v1.POST("/chat/completions", chatHandler.ChatStream)
+		v1.POST("/chat/completions", chatHandler.HandleChatCompletions)
 		v1.GET("/models", chatHandler.ListModels)
 	}
 
