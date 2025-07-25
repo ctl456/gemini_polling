@@ -509,6 +509,70 @@ RetryLoop:
 	return fmt.Errorf("所有 API Key 均尝试失败，最后一次错误: %w", lastErr)
 }
 
+// +++ 新增: 处理 Gemini 原生 countTokens API +++
+func (s *GenAIService) CountTokens(ctx context.Context, modelName string, reqBody []byte) ([]byte, int, error) {
+	maxRetries := s.configManager.Get().MaxRetries
+	var lastErr error
+
+	for i := 0; i < maxRetries; i++ {
+		activeKey, err := s.keyStore.GetNextActiveKey()
+		if err != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("无法获取可用的 API Key: %w", err)
+		}
+		if s.isKeyRateLimited(activeKey.ID) {
+			lastErr = fmt.Errorf("key ID %d is rate limited", activeKey.ID)
+			continue
+		}
+
+		log.Printf("第 %d 次尝试 (Gemini CountTokens), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
+		url_str := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:countTokens", modelName)
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url_str, bytes.NewReader(reqBody))
+		if err != nil {
+			lastErr = fmt.Errorf("创建 HTTP 请求失败: %w", err)
+			continue
+		}
+
+		// 使用 X-Goog-Api-Key Header 进行认证
+		httpReq.Header.Set("X-Goog-Api-Key", activeKey.Key)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := s.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("请求 Google API 失败 (Key ID: %d): %w", activeKey.ID, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("读取上游响应体失败: %w", err)
+			continue
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			log.Printf("Gemini CountTokens 请求成功 (Key ID: %d)", activeKey.ID)
+			return respBody, resp.StatusCode, nil
+		}
+
+		errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(respBody))
+		lastErr = errors.New(errorMsg)
+		log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			s.temporaryDisableKey(activeKey.ID, errorMsg)
+		} else if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			s.keyStore.Disable(activeKey.ID, errorMsg)
+		}
+		// 其他错误则重试
+	}
+	log.Printf("所有 %d 次重试均失败。", maxRetries)
+	if lastErr != nil {
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("所有 API Key 均尝试失败，最后一次错误: %w", lastErr)
+	}
+	return nil, http.StatusServiceUnavailable, errors.New("所有 API Key 均尝试失败，但未捕获到具体错误")
+}
+
 func (s *GenAIService) ValidateAPIKey(apiKey string) (bool, string) {
 	const url = "https://generativelanguage.googleapis.com/v1beta/openai/models"
 	req, err := http.NewRequest("GET", url, nil)

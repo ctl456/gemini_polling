@@ -204,6 +204,9 @@ func (h *ChatHandler) HandleGeminiAction(c *gin.Context) {
 		h.proxyGeminiGenerateContent(c, modelName, requestBody)
 	case "streamGenerateContent":
 		h.proxyGeminiStreamGenerateContent(c, modelName, requestBody)
+		// +++ 新增 case +++
+	case "countTokens":
+		h.proxyGeminiCountTokens(c, modelName, requestBody)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported action: " + action})
 	}
@@ -240,4 +243,24 @@ func (h *ChatHandler) proxyGeminiStreamGenerateContent(c *gin.Context, modelName
 	if err != nil {
 		log.Printf("Error proxying StreamGenerateContent for model %s: %v", modelName, err)
 	}
+}
+
+// +++ 新增: 代理 Gemini countTokens 请求的辅助函数 +++
+func (h *ChatHandler) proxyGeminiCountTokens(c *gin.Context, modelName string, requestBody []byte) {
+	respBody, statusCode, err := h.genaiService.CountTokens(c.Request.Context(), modelName, requestBody)
+	if err != nil {
+		log.Printf("Error proxying CountTokens for model %s: %v", modelName, err)
+		if statusCode == 0 {
+			statusCode = http.StatusServiceUnavailable
+		}
+		// 尝试解析上游错误，如果不行就返回通用错误
+		var upstreamError map[string]interface{}
+		if json.Unmarshal(respBody, &upstreamError) == nil {
+			c.JSON(statusCode, upstreamError)
+		} else {
+			c.JSON(statusCode, gin.H{"error": "Upstream API error: " + err.Error()})
+		}
+		return
+	}
+	c.Data(statusCode, "application/json; charset=utf-8", respBody)
 }
