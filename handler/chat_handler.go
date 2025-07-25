@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type ChatHandler struct {
@@ -153,4 +154,90 @@ func (h *ChatHandler) ListModels(c *gin.Context) {
 	// 直接将从 Google API 收到的响应体和状态码转发给客户端
 	// 设置正确的 Content-Type
 	c.Data(statusCode, "application/json; charset=utf-8", body)
+}
+
+// ListModels 从 Google API 获取并返回支持的模型列表(Gemini Api 格式)
+func (h *ChatHandler) ListModels2(c *gin.Context) {
+
+	queryParams := c.Request.URL.Query()
+	// 调用服务层来获取模型列表
+	body, statusCode, err := h.genaiService.ListGeminiCompatibleModels(c.Request.Context(), queryParams)
+	if err != nil {
+		// 如果服务层返回错误，记录日志并向客户端返回错误信息
+		log.Printf("获取模型列表时发生错误: %v", err)
+		// 使用服务层返回的状态码，或者如果它不可用，则使用500
+		if statusCode == 0 {
+			statusCode = http.StatusInternalServerError
+		}
+		c.JSON(statusCode, gin.H{"error": "Failed to fetch models from upstream: " + err.Error()})
+		return
+	}
+	// 直接将从 Google API 收到的响应体和状态码转发给客户端
+	// 设置正确的 Content-Type
+	c.Data(statusCode, "application/json; charset=utf-8", body)
+}
+
+// +++ 新增: 统一处理 Gemini 原生 API 请求的 Handler +++
+func (h *ChatHandler) HandleGeminiAction(c *gin.Context) {
+	// 从 catch-all 参数中获取路径，并去除开头的'/'
+	fullPath := strings.TrimPrefix(c.Param("model_and_action"), "/")
+
+	// 按 ':' 分割来获取模型和动作
+	parts := strings.SplitN(fullPath, ":", 2)
+	if len(parts) != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid URL format. Expected 'model:action'."})
+		return
+	}
+	modelName := parts[0]
+	action := parts[1]
+
+	// 读取请求体
+	requestBody, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body: " + err.Error()})
+		return
+	}
+
+	// 根据动作分发
+	switch action {
+	case "generateContent":
+		h.proxyGeminiGenerateContent(c, modelName, requestBody)
+	case "streamGenerateContent":
+		h.proxyGeminiStreamGenerateContent(c, modelName, requestBody)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported action: " + action})
+	}
+}
+
+// proxyGeminiGenerateContent 是 HandleGeminiAction 的一个辅助函数，处理非流式代理
+func (h *ChatHandler) proxyGeminiGenerateContent(c *gin.Context, modelName string, requestBody []byte) {
+	respBody, statusCode, err := h.genaiService.GenerateContent(c.Request.Context(), modelName, requestBody)
+	if err != nil {
+		log.Printf("Error proxying GenerateContent for model %s: %v", modelName, err)
+		if statusCode == 0 {
+			statusCode = http.StatusServiceUnavailable
+		}
+		// 尝试解析上游错误，如果不行就返回通用错误
+		var upstreamError map[string]interface{}
+		if json.Unmarshal(respBody, &upstreamError) == nil {
+			c.JSON(statusCode, upstreamError)
+		} else {
+			c.JSON(statusCode, gin.H{"error": "Upstream API error: " + err.Error()})
+		}
+		return
+	}
+	c.Data(statusCode, "application/json; charset=utf-8", respBody)
+}
+
+// proxyGeminiStreamGenerateContent 是 HandleGeminiAction 的一个辅助函数，处理流式代理
+func (h *ChatHandler) proxyGeminiStreamGenerateContent(c *gin.Context, modelName string, requestBody []byte) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+
+	err := h.genaiService.StreamGenerateContent(c.Request.Context(), c.Writer, modelName, requestBody)
+	if err != nil {
+		log.Printf("Error proxying StreamGenerateContent for model %s: %v", modelName, err)
+	}
 }

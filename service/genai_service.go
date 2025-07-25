@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -312,6 +313,200 @@ func (s *GenAIService) ListOpenAICompatibleModels(ctx context.Context) ([]byte, 
 	}
 	// 7. 返回原始响应体、状态码和 nil 错误
 	return body, resp.StatusCode, nil
+}
+
+func (s *GenAIService) ListGeminiCompatibleModels(ctx context.Context, queryParams url.Values) ([]byte, int, error) {
+	// 1. 获取一个可用的 API Key
+	activeKey, err := s.keyStore.GetNextActiveKey()
+	if err != nil {
+		// 如果没有可用的 key，返回内部服务器错误
+		log.Println("获取模型列表失败: 没有可用的API Key")
+		return nil, http.StatusInternalServerError, fmt.Errorf("没有可用的 API Key: %w", err)
+	}
+	log.Printf("正在使用 Key ID: %d 获取模型列表", activeKey.ID)
+	// 2. 准备 HTTP 请求
+	// 构建带查询参数的URL
+	baseURL := "https://generativelanguage.googleapis.com/v1beta/models"
+	apiURL, _ := url.Parse(baseURL)
+	apiURL.RawQuery = queryParams.Encode() // 保留原始查询参数
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL.String(), nil)
+	if err != nil {
+		log.Printf("创建模型列表请求失败: %v", err)
+		return nil, http.StatusInternalServerError, fmt.Errorf("创建请求失败: %w", err)
+	}
+	// 3. 设置 Authorization Header
+	req.Header.Set("X-Goog-Api-Key", activeKey.Key)
+	req.Header.Set("Accept", "application/json")
+	// 4. 发送请求
+	client := &http.Client{Timeout: 15 * time.Second} // 设置15秒超时
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("请求 Google 模型列表 API 失败 (Key ID: %d): %v", activeKey.ID, err)
+		return nil, http.StatusBadGateway, fmt.Errorf("请求 Google API 失败: %w", err)
+	}
+	defer resp.Body.Close()
+	// 5. 读取响应体
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("读取模型列表响应体失败: %v", err)
+		return nil, http.StatusInternalServerError, fmt.Errorf("读取响应体失败: %w", err)
+	}
+	// 6. 如果是 Key 相关错误 (如 401, 403, 429)，则禁用该 Key
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		errorReason := fmt.Sprintf("获取模型列表失败, 状态码: %d", resp.StatusCode)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			s.temporaryDisableKey(activeKey.ID, errorReason)
+		} else {
+			s.keyStore.Disable(activeKey.ID, errorReason)
+			log.Printf("因获取模型列表失败而禁用 Key ID %d", activeKey.ID)
+		}
+	}
+	// 7. 返回原始响应体、状态码和 nil 错误
+	return body, resp.StatusCode, nil
+}
+
+// +++ 新增: 处理 Gemini 原生 generateContent API +++
+func (s *GenAIService) GenerateContent(ctx context.Context, modelName string, reqBody []byte) ([]byte, int, error) {
+	maxRetries := s.configManager.Get().MaxRetries
+	var lastErr error
+
+	for i := 0; i < maxRetries; i++ {
+		activeKey, err := s.keyStore.GetNextActiveKey()
+		if err != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("无法获取可用的 API Key: %w", err)
+		}
+		if s.isKeyRateLimited(activeKey.ID) {
+			lastErr = fmt.Errorf("key ID %d is rate limited", activeKey.ID)
+			continue
+		}
+
+		log.Printf("第 %d 次尝试 (Gemini GenerateContent), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
+		url_str := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", modelName)
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url_str, bytes.NewReader(reqBody))
+		if err != nil {
+			lastErr = fmt.Errorf("创建 HTTP 请求失败: %w", err)
+			continue
+		}
+
+		// 使用 X-Goog-Api-Key Header 进行认证
+		httpReq.Header.Set("X-Goog-Api-Key", activeKey.Key)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := s.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("请求 Google API 失败 (Key ID: %d): %w", activeKey.ID, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("读取上游响应体失败: %w", err)
+			continue
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			log.Printf("Gemini GenerateContent 请求成功 (Key ID: %d)", activeKey.ID)
+			return respBody, resp.StatusCode, nil
+		}
+
+		errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(respBody))
+		lastErr = errors.New(errorMsg)
+		log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			s.temporaryDisableKey(activeKey.ID, errorMsg)
+		} else if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			s.keyStore.Disable(activeKey.ID, errorMsg)
+		}
+		// 其他错误则重试
+	}
+	return nil, http.StatusServiceUnavailable, fmt.Errorf("所有 API Key 均尝试失败，最后一次错误: %w", lastErr)
+}
+
+// +++ 新增: 处理 Gemini 原生 streamGenerateContent API +++
+func (s *GenAIService) StreamGenerateContent(ctx context.Context, w io.Writer, modelName string, reqBody []byte) error {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return fmt.Errorf("streaming unsupported")
+	}
+
+	maxRetries := s.configManager.Get().MaxRetries
+	var lastErr error
+
+RetryLoop:
+	for i := 0; i < maxRetries; i++ {
+		activeKey, err := s.keyStore.GetNextActiveKey()
+		if err != nil {
+			return fmt.Errorf("无法获取可用的 API Key: %w", err)
+		}
+
+		if s.isKeyRateLimited(activeKey.ID) {
+			lastErr = fmt.Errorf("key ID %d is rate limited", activeKey.ID)
+			continue
+		}
+
+		log.Printf("第 %d 次尝试 (Gemini Stream), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
+
+		// 注意 URL 中需要包含 ?alt=sse 参数
+		url_str := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse", modelName)
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url_str, bytes.NewReader(reqBody))
+		if err != nil {
+			lastErr = fmt.Errorf("创建 HTTP 请求失败: %w", err)
+			continue
+		}
+
+		httpReq.Header.Set("X-Goog-Api-Key", activeKey.Key)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
+
+		resp, err := s.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("请求 Google API 失败 (Key ID: %d): %w", activeKey.ID, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(body))
+			lastErr = errors.New(errorMsg)
+			log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+
+			if resp.StatusCode == http.StatusTooManyRequests {
+				s.temporaryDisableKey(activeKey.ID, errorMsg)
+			} else if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				s.keyStore.Disable(activeKey.ID, errorMsg)
+			}
+			continue RetryLoop
+		}
+
+		// 成功，开始流式转发
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			_, err := fmt.Fprintf(w, "%s\n\n", line)
+			if err != nil {
+				return err // 客户端可能已断开连接
+			}
+			flusher.Flush()
+		}
+
+		if err := scanner.Err(); err != nil {
+			lastErr = err
+			continue RetryLoop
+		}
+
+		log.Printf("Gemini Stream 请求成功 (Key ID: %d), 流已结束。", activeKey.ID)
+		return nil // 成功完成
+	}
+
+	return fmt.Errorf("所有 API Key 均尝试失败，最后一次错误: %w", lastErr)
 }
 
 func (s *GenAIService) ValidateAPIKey(apiKey string) (bool, string) {

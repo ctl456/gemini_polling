@@ -75,6 +75,15 @@ func main() {
 		v1.GET("/models", chatHandler.ListModels)
 	}
 
+	// gemini 格式api
+	v1beta := router.Group("/v1beta")
+	v1beta.Use(middleware.PollingAuthMiddleware(configManager))
+	{
+		v1beta.GET("/models", chatHandler.ListModels2)
+		// +++ 新增的 Gemini 原生文本生成路由 +++
+		v1beta.POST("/models/*model_and_action", chatHandler.HandleGeminiAction)
+	}
+
 	// 管理API
 	adminApiGroup := router.Group("/api/admin")
 	{
@@ -108,6 +117,7 @@ func main() {
 	log.Printf("  管理后台登录地址:     http://localhost%s/admin/login.html", serverAddr)
 	log.Println("---")
 	log.Printf("  聊天 API Endpoint:      http://localhost%s/v1/chat/completions", serverAddr)
+	log.Printf("  Gemini 原生格式 API:    http://localhost%s/v1beta/models/gemini-pro:generateContent", serverAddr)
 	log.Printf("  访问 /v1 路径认证:     %s", tern(cfg.PollingAPIKey != "", "Bearer Token", "无"))
 	log.Println("=========================================================")
 
