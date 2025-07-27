@@ -144,6 +144,15 @@ func (s *KeyStore) GetAllEnabledKeys() ([]model.APIKey, error) {
 	return keys, nil
 }
 
+// +新增: 这个函数专门为 KeyScanner 服务
+func (s *KeyStore) GetAllDisabledKeys() ([]model.APIKey, error) {
+	var keys []model.APIKey
+	if err := s.db.Where("enabled = ?", false).Find(&keys).Error; err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
 func (s *KeyStore) AddMultiple(keys []string) (addedCount int, skippedCount int, err error) {
 	if len(keys) == 0 {
 		return 0, 0, nil

@@ -94,6 +94,7 @@ func main() {
 		{
 			// ... keys 路由不变
 			keysGroup.POST("/scan", keyHandler.ScanAllKeysHandler) // +新增
+			keysGroup.POST("/scan-disabled", keyHandler.ScanAllDisabledKeysHandler) // +新增
 			keysGroup.POST("", keyHandler.AddKey)
 			keysGroup.GET("", keyHandler.ListKeys)
 			keysGroup.DELETE("/:id", keyHandler.DeleteKey)

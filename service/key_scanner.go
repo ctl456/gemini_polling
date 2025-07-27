@@ -69,3 +69,37 @@ func (s *KeyScanner) ScanAllEnabledKeys() {
 
 	log.Printf("<== 扫描完成。共检查 %d 个 Key，发现并禁用了 %d 个无效 Key。", len(keys), invalidCount)
 }
+
+// ScanAllDisabledKeys 是执行扫描禁用key的核心方法
+func (s *KeyScanner) ScanAllDisabledKeys() {
+	log.Println("==> 开始执行所有禁用 Key 的有效性扫描...")
+	keys, err := s.keyStore.GetAllDisabledKeys()
+	if err != nil {
+		log.Printf("[错误] 扫描时无法获取已禁用的 Key: %v", err)
+		return
+	}
+
+	if len(keys) == 0 {
+		log.Println("数据库中没有已禁用的 Key，跳过扫描。")
+		return
+	}
+
+	log.Printf("发现 %d 个已禁用的 Key，正在逐个验证...", len(keys))
+	var validCount int
+	for _, key := range keys {
+		isValid, _ := s.genaiService.ValidateAPIKey(key.Key)
+		if isValid {
+			validCount++
+			log.Printf("  -> Key ID %d (尾号...%s) 验证通过，正在重新启用。", key.ID, key.Key[len(key.Key)-4:])
+			if err := s.keyStore.SetEnabled(key.ID, true); err != nil {
+				log.Printf("  -> 启用 Key ID %d 失败: %v", key.ID, err)
+			}
+		} else {
+			log.Printf("  -> Key ID %d 仍然无效。", key.ID)
+		}
+		// 在每次请求之间稍作停顿，避免触发上游 API 的速率限制
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	log.Printf("<== 扫描完成。共检查 %d 个 Key，发现并重新启用了 %d 个有效 Key。", len(keys), validCount)
+}

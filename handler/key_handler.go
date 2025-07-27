@@ -86,6 +86,16 @@ func (h *KeyHandler) ScanAllKeysHandler(c *gin.Context) {
 	})
 }
 
+// +新增: ScanAllDisabledKeysHandler 用于处理手动扫描禁用key的请求
+func (h *KeyHandler) ScanAllDisabledKeysHandler(c *gin.Context) {
+	// 在后台运行扫描，立即返回响应，避免前端请求超时
+	go h.keyScanner.ScanAllDisabledKeys()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "已启动对所有禁用 Key 的后台扫描任务，请稍后查看日志或刷新列表。",
+	})
+}
+
 // BatchAddKeys 批量添加 Keys
 func (h *KeyHandler) BatchAddKeys(c *gin.Context) {
 	var json struct {
