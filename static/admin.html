@@ -185,10 +185,15 @@
                 <div>
                     <ul class="nav nav-pills">
                         <li class="nav-item">
+                            <!-- 修改 onclick, 添加 'banned' -->
                             <a class="nav-link active" href="#" id="tab-enabled" onclick="changeTab('enabled')">已启用</a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href="#" id="tab-disabled" onclick="changeTab('disabled')">已禁用</a>
+                        </li>
+                        <!-- +++ 新增标签页 +++ -->
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" id="tab-banned" onclick="changeTab('banned')">临时禁用</a>
                         </li>
                     </ul>
                 </div>
@@ -197,8 +202,7 @@
         <div class="card-body">
             <!-- Toolbar -->
             <div class="mb-3 d-flex flex-wrap gap-2">
-                <button class="btn btn-outline-primary btn-sm" id="scan-all-btn" onclick="scanAllKeys()"><i class="bi bi-broadcast"></i> 扫描所有启用Key</button>
-                <button class="btn btn-outline-warning btn-sm" id="scan-disabled-btn" onclick="scanAllDisabledKeys()"><i class="bi bi-recycle"></i> 扫描所有禁用Key</button>
+                <button class="btn btn-outline-primary btn-sm" id="scan-all-btn" onclick="scanAllKeys()"><i class="bi-activity"></i> 全面健康检查</button>
                 <button class="btn btn-outline-info btn-sm" id="check-selected-btn" onclick="checkSelectedKeys()"><i class="bi bi-check-circle"></i> 校验选中</button>
                 <button class="btn btn-outline-danger btn-sm" id="delete-selected-btn" onclick="deleteSelectedKeys()"><i class="bi bi-trash"></i> 删除选中</button>
             </div>
@@ -212,7 +216,8 @@
                         <th scope="col">ID</th>
                         <th scope="col">API Key (部分)</th>
                         <th scope="col" class="text-center">状态</th>
-                        <th scope="col" class="text-center">操作</th>
+                        <!-- +++ 新增表头 +++ -->
+                        <th scope="col" class="text-center" id="extra-header">操作</th>
                     </tr>
                     </thead>
                     <tbody id="keys-table-body">
@@ -329,9 +334,15 @@
         showLoading(true);
         const masterCheckbox = document.querySelector('thead input[type="checkbox"]');
         if (masterCheckbox) masterCheckbox.checked = false;
-        
+
+        // +++ 新增: 根据当前 tab 决定 API URL +++
+        let apiUrl = `${API_BASE_URL}?page=${currentPage}&pageSize=${pageSize}&status=${currentStatusTab}`;
+        if (currentStatusTab === 'banned') {
+            apiUrl = `${API_BASE_URL}/banned`;
+        }
         try {
-            const response = await fetchApi(`${API_BASE_URL}?page=${currentPage}&pageSize=${pageSize}&status=${currentStatusTab}`);
+            // 使用新的 apiUrl
+            const response = await fetchApi(apiUrl);
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({error: `请求失败: ${response.statusText}`}));
                 throw new Error(errorData.error);
@@ -339,7 +350,7 @@
             const data = await response.json();
             totalItems = data.total_count || 0;
             renderTable(data.keys || []);
-            renderPagination();
+            renderPagination(); // 分页对于 banned 列表可能不需要，但为了统一，保留它
         } catch (error) {
             showToast(`加载Key列表失败: ${error.message}`, 'error');
             renderTable([]);
@@ -358,7 +369,21 @@
 
     function renderTable(keys) {
         const tbody = document.getElementById('keys-table-body');
+        const extraHeader = document.getElementById('extra-header');
         tbody.innerHTML = '';
+
+        // 根据当前 tab 调整表头和工具栏可见性
+        if (currentStatusTab === 'banned') {
+            extraHeader.textContent = '解禁倒计时';
+            // 隐藏不适用于此状态的按钮
+            document.getElementById('check-selected-btn').style.display = 'none';
+            document.getElementById('delete-selected-btn').style.display = 'none';
+        } else {
+            extraHeader.textContent = '操作';
+            // 显示按钮
+            document.getElementById('check-selected-btn').style.display = 'inline-block';
+            document.getElementById('delete-selected-btn').style.display = 'inline-block';
+        }
         if (keys.length === 0) {
             tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4">没有找到任何 Key</td></tr>`;
             return;
@@ -366,23 +391,46 @@
         keys.forEach(key => {
             const tr = document.createElement('tr');
             tr.id = `key-row-${key.id}`;
-            // ================== FIX IS HERE ==================
-            // Added 'key-checkbox' class to the input element
-            tr.innerHTML = `
-                <td class="text-center"><input class="form-check-input key-checkbox" type="checkbox" data-id="${key.id}"></td>
-                <td>${key.id}</td>
-                <td class="key-text">${maskKey(key.key)}</td>
-                <td class="text-center"><span class="badge rounded-pill ${key.enabled ? 'text-bg-success' : 'text-bg-danger'}">${key.enabled ? '已启用' : '已禁用'}</span></td>
-                <td class="text-center">
-                    <button class="btn btn-outline-info btn-sm" onclick="checkSingleKey(${key.id}, this)" title="校验Key有效性">
-                        <i class="bi bi-shield-check"></i>
-                    </button>
-                    <button class="btn btn-outline-danger btn-sm" onclick="deleteKey(${key.id})" title="删除Key">
-                        <i class="bi bi-trash"></i>
-                    </button>
-                </td>
+
+            // 为 Banned Key 计算倒计时
+            let extraColumnHtml = '';
+            if (currentStatusTab === 'banned' && key.banned_until) {
+                const bannedUntil = new Date(key.banned_until);
+                const now = new Date();
+                const diffSeconds = Math.round((bannedUntil.getTime() - now.getTime()) / 1000);
+
+                if (diffSeconds > 0) {
+                    const minutes = Math.floor(diffSeconds / 60);
+                    const seconds = diffSeconds % 60;
+                    extraColumnHtml = `<span class="badge bg-warning text-dark">${minutes}分 ${seconds}秒</span>`;
+                } else {
+                    extraColumnHtml = `<span class="badge bg-secondary">已到期</span>`;
+                }
+            } else {
+                // 启用的/禁用的 key 的常规操作按钮
+                extraColumnHtml = `
+                <button class="btn btn-outline-info btn-sm" onclick="checkSingleKey(${key.id}, this)" title="校验Key有效性">
+                    <i class="bi bi-shield-check"></i>
+                </button>
+                <button class="btn btn-outline-danger btn-sm" onclick="deleteKey(${key.id})" title="删除Key">
+                    <i class="bi bi-trash"></i>
+                </button>
             `;
-            // =================================================
+            }
+            // 渲染状态徽章
+            let statusBadge = '';
+            if (currentStatusTab === 'banned') {
+                statusBadge = `<span class="badge rounded-pill text-bg-warning">临时禁用</span>`;
+            } else {
+                statusBadge = `<span class="badge rounded-pill ${key.enabled ? 'text-bg-success' : 'text-bg-danger'}">${key.enabled ? '已启用' : '已禁用'}</span>`;
+            }
+            tr.innerHTML = `
+            <td class="text-center"><input class="form-check-input key-checkbox" type="checkbox" data-id="${key.id}" ${currentStatusTab === 'banned' ? 'disabled' : ''}></td>
+            <td>${key.id}</td>
+            <td class="key-text">${maskKey(key.key)}</td>
+            <td class="text-center">${statusBadge}</td>
+            <td class="text-center">${extraColumnHtml}</td>
+        `;
             tbody.appendChild(tr);
         });
     }
@@ -465,12 +513,20 @@
 
     // --- UI Actions & Event Handlers ---
     function changeTab(status) {
+        if (currentStatusTab === status) return;
+        // 移除所有 tab 的 active 类
+        document.getElementById('tab-enabled').classList.remove('active');
+        document.getElementById('tab-disabled').classList.remove('active');
+        document.getElementById('tab-banned').classList.remove('active');
+
+        // 给点击的 tab 添加 active 类
+        document.getElementById(`tab-${status}`).classList.add('active');
         currentStatusTab = status;
         currentPage = 1;
-        document.getElementById('tab-enabled').classList.toggle('active', status === 'enabled');
-        document.getElementById('tab-disabled').classList.toggle('active', status === 'disabled');
+
         const masterCheckbox = document.querySelector('thead input[type="checkbox"]');
         if (masterCheckbox) masterCheckbox.checked = false;
+
         fetchKeys();
     }
 
@@ -633,11 +689,11 @@
     }
 
     async function scanAllKeys() {
-        if (!confirm('这将触发一个后台任务来验证所有已启用的 Key，该过程可能需要一些时间。确定要开始吗？')) return;
-
+        if (!confirm('这将触发一个后台任务来检查所有Key的健康状况（包括已启用和已禁用），该过程可能需要一些时间。确定要开始吗？')) return;
         const scanBtn = document.getElementById('scan-all-btn');
         scanBtn.disabled = true;
         try {
+            // API 端点已在后端更新为 /api/admin/keys/scan
             const response = await fetchApi(`${API_BASE_URL}/scan`, { method: 'POST' });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '启动扫描任务失败');
@@ -649,22 +705,37 @@
         }
     }
 
-    async function scanAllDisabledKeys() {
-        if (!confirm('这将触发一个后台任务来验证所有已禁用的 Key，该过程可能需要一些时间。确定要开始吗？')) return;
+    // +++ 定时器，用于更新倒计时 +++
+    setInterval(() => {
+        if (currentStatusTab === 'banned') {
+            const rows = document.querySelectorAll('#keys-table-body tr');
+            rows.forEach(row => {
+                const countdownSpan = row.querySelector('.badge.bg-warning');
+                if (!countdownSpan) return;
 
-        const scanBtn = document.getElementById('scan-disabled-btn');
-        scanBtn.disabled = true;
-        try {
-            const response = await fetchApi(`${API_BASE_URL}/scan-disabled`, { method: 'POST' });
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.error || '启动扫描任务失败');
-            showToast(result.message, 'info');
-        } catch (error) {
-            showToast(`操作失败: ${error.message}`, 'error');
-        } finally {
-            scanBtn.disabled = false;
+                // 从文本中解析剩余时间
+                const text = countdownSpan.textContent;
+                const minMatch = text.match(/(\d+)分/);
+                const secMatch = text.match(/(\d+)秒/);
+                let totalSeconds = 0;
+                if(minMatch) totalSeconds += parseInt(minMatch[1]) * 60;
+                if(secMatch) totalSeconds += parseInt(secMatch[1]);
+
+                totalSeconds -= 1; // 每秒减一
+                if (totalSeconds > 0) {
+                    const minutes = Math.floor(totalSeconds / 60);
+                    const seconds = totalSeconds % 60;
+                    countdownSpan.textContent = `${minutes}分 ${seconds}秒`;
+                } else {
+                    countdownSpan.textContent = '即将刷新...';
+                    countdownSpan.classList.remove('bg-warning', 'text-dark');
+                    countdownSpan.classList.add('bg-success');
+                    // 延迟刷新列表
+                    setTimeout(() => fetchKeys(), 1500);
+                }
+            });
         }
-    }
+    }, 1000);
 </script>
 </body>
 </html>

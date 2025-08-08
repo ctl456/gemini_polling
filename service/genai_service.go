@@ -29,6 +29,12 @@ type GenAIService struct {
 	configManager    *config.Manager // 持有 Manager 而不是静态配置
 }
 
+// BannedKeyInfo 用于向前端展示被临时禁用的Key信息
+type BannedKeyInfo struct {
+	model.APIKey
+	BannedUntil time.Time `json:"banned_until"`
+}
+
 // NewGenAIService 构造函数现在接收完整的配置
 func NewGenAIService(manager *config.Manager, keyStore *storage.KeyStore) *GenAIService {
 	transport := &http.Transport{
@@ -593,4 +599,41 @@ func (s *GenAIService) ValidateAPIKey(apiKey string) (bool, string) {
 	body, _ := io.ReadAll(resp.Body)
 	// 返回一个组合了状态码和响应体的错误信息
 	return false, fmt.Sprintf("Invalid (HTTP %d): %s", resp.StatusCode, string(body))
+}
+
+// GetBannedKeysInfo 获取所有当前在内存中被临时禁用的Key的详细信息
+func (s *GenAIService) GetBannedKeysInfo() ([]BannedKeyInfo, error) {
+	s.rateLimitedMutex.RLock()
+	// 复制 map 以尽快释放锁
+	bannedIDs := make(map[uint]time.Time)
+	for id, until := range s.rateLimitedKeys {
+		// 只包括还未解禁的
+		if time.Now().Before(until) {
+			bannedIDs[id] = until
+		}
+	}
+	s.rateLimitedMutex.RUnlock()
+	if len(bannedIDs) == 0 {
+		return []BannedKeyInfo{}, nil
+	}
+
+	var ids []uint
+	for id := range bannedIDs {
+		ids = append(ids, id)
+	}
+	// 从数据库中查询这些 key 的基本信息
+	keys, err := s.keyStore.FindAllByIDs(ids)
+	if err != nil {
+		return nil, fmt.Errorf("从数据库查询被禁用Key的详情失败: %w", err)
+	}
+	var results []BannedKeyInfo
+	for _, key := range keys {
+		if until, ok := bannedIDs[key.ID]; ok {
+			results = append(results, BannedKeyInfo{
+				APIKey:      key,
+				BannedUntil: until,
+			})
+		}
+	}
+	return results, nil
 }

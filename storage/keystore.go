@@ -184,3 +184,15 @@ func (s *KeyStore) AddMultiple(keys []string) (addedCount int, skippedCount int,
 	}
 	return addedCount, skippedCount, nil
 }
+
+// FindAllByIDs 根据 ID 列表查找多个 Key
+func (s *KeyStore) FindAllByIDs(ids []uint) ([]model.APIKey, error) {
+	if len(ids) == 0 {
+		return []model.APIKey{}, nil
+	}
+	var keys []model.APIKey
+	if err := s.db.Where("id IN ?", ids).Find(&keys).Error; err != nil {
+		return nil, err
+	}
+	return keys, nil
+}

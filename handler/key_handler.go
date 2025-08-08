@@ -15,16 +15,16 @@ type KeyHandler struct {
 	genaiService  *service.GenAIService
 	adminAPIKey   string // 保存 admin key 用于登录验证
 	configManager *config.Manager
-	keyScanner    *service.KeyScanner
+	healthChecker *service.KeyHealthChecker
 }
 
 // +修改: 更新 NewKeyHandler 的签名
-func NewKeyHandler(store *storage.KeyStore, genaiService *service.GenAIService, manager *config.Manager, scanner *service.KeyScanner) *KeyHandler {
+func NewKeyHandler(store *storage.KeyStore, genaiService *service.GenAIService, manager *config.Manager, checker *service.KeyHealthChecker) *KeyHandler {
 	return &KeyHandler{
 		store:         store,
 		genaiService:  genaiService,
 		configManager: manager,
-		keyScanner:    scanner, // +新增
+		healthChecker: checker, // --- 修改 ---
 	}
 }
 
@@ -78,21 +78,10 @@ func (h *KeyHandler) AddKey(c *gin.Context) {
 
 // +新增: ScanAllKeysHandler 用于处理手动扫描请求
 func (h *KeyHandler) ScanAllKeysHandler(c *gin.Context) {
-	// 在后台运行扫描，立即返回响应，避免前端请求超时
-	go h.keyScanner.ScanAllEnabledKeys()
-
+	// 在后台运行扫描，立即返回响应
+	go h.healthChecker.RunAllChecks()
 	c.JSON(http.StatusOK, gin.H{
-		"message": "已启动对所有启用 Key 的后台扫描任务，请稍后查看日志或刷新列表。",
-	})
-}
-
-// +新增: ScanAllDisabledKeysHandler 用于处理手动扫描禁用key的请求
-func (h *KeyHandler) ScanAllDisabledKeysHandler(c *gin.Context) {
-	// 在后台运行扫描，立即返回响应，避免前端请求超时
-	go h.keyScanner.ScanAllDisabledKeys()
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "已启动对所有禁用 Key 的后台扫描任务，请稍后查看日志或刷新列表。",
+		"message": "已启动对所有 Key（包括已启用和已禁用）的后台健康检查任务，请稍后查看日志。",
 	})
 }
 
@@ -233,4 +222,21 @@ func (h *KeyHandler) DeleteKey(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// ListBannedKeys 列出所有被临时禁用的 Key
+func (h *KeyHandler) ListBannedKeys(c *gin.Context) {
+	bannedKeys, err := h.genaiService.GetBannedKeysInfo()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取临时禁用列表失败: " + err.Error()})
+		return
+	}
+
+	// 为了与前端分页组件兼容，即使我们不真的分页，也返回相似的结构
+	c.JSON(http.StatusOK, gin.H{
+		"keys":        bannedKeys,
+		"total_count": len(bannedKeys),
+		"page":        1,
+		"page_size":   len(bannedKeys),
+	})
 }

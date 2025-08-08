@@ -45,13 +45,12 @@ func main() {
 	// GenAIService 现在也需要接收 ConfigManager 以便动态获取最新配置
 	genaiService := service.NewGenAIService(configManager, keyStore)
 
-	// +新增: 初始化并启动 KeyScanner
-	keyScanner := service.NewKeyScanner(keyStore, genaiService)
-	// 设置为每 24 小时扫描一次
-	keyScanner.StartPeriodicScan(24 * time.Hour)
+	// 设置为每小时扫描一次
+	healthChecker := service.NewKeyHealthChecker(keyStore, genaiService)
+	healthChecker.StartPeriodicChecks(1 * time.Hour) // 你可以调整这个间隔
 
 	// 各个 Handler 现在接收 ConfigManager
-	keyHandler := handler.NewKeyHandler(keyStore, genaiService, configManager, keyScanner)
+	keyHandler := handler.NewKeyHandler(keyStore, genaiService, configManager, healthChecker)
 	chatHandler := handler.NewChatHandler(genaiService)
 	configHandler := handler.NewConfigHandler(configManager)
 
@@ -93,10 +92,11 @@ func main() {
 		keysGroup.Use(middleware.AdminAuthMiddleware(configManager))
 		{
 			// ... keys 路由不变
-			keysGroup.POST("/scan", keyHandler.ScanAllKeysHandler) // +新增
-			keysGroup.POST("/scan-disabled", keyHandler.ScanAllDisabledKeysHandler) // +新增
+			keysGroup.POST("/scan", keyHandler.ScanAllKeysHandler) // 统一的扫描入口
 			keysGroup.POST("", keyHandler.AddKey)
 			keysGroup.GET("", keyHandler.ListKeys)
+			// +++ 新增路由 +++
+			keysGroup.GET("/banned", keyHandler.ListBannedKeys)
 			keysGroup.DELETE("/:id", keyHandler.DeleteKey)
 			keysGroup.POST("/batch-add", keyHandler.BatchAddKeys)
 			keysGroup.POST("/batch-delete", keyHandler.BatchDeleteKeys)
