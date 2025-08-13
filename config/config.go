@@ -23,6 +23,7 @@ type Config struct {
 	PollingAPIKey     string
 	MaxRetries        int
 	RateLimitCooldown time.Duration
+	HealthCheckConcurrency int
 	MySQLUser         string
 	MySQLPassword     string
 	MySQLHost         string
@@ -94,6 +95,12 @@ func loadFromFile() (*Config, error) {
 		cooldownSeconds = 60
 	}
 
+	healthCheckConcurrency, err := strconv.Atoi(getEnv("HEALTH_CHECK_CONCURRENCY", "10"))
+	if err != nil {
+		fmt.Printf("警告: HEALTH_CHECK_CONCURRENCY 值无效, 使用默认值 10。错误: %v\n", err)
+		healthCheckConcurrency = 10
+	}
+
 	cfg := &Config{
 		Port:              getEnv("SERVER_PORT", "8080"),
 		AdminAPIKey:       getEnv("ADMIN_API_KEY", "fallback-admin-key"),
@@ -102,6 +109,7 @@ func loadFromFile() (*Config, error) {
 		PollingAPIKey:     getEnv("POLLING_API_KEY", ""),
 		MaxRetries:        maxRetries,
 		RateLimitCooldown: time.Duration(cooldownSeconds) * time.Second,
+		HealthCheckConcurrency: healthCheckConcurrency,
 		MySQLUser:         getEnv("MYSQL_USER", "root"),
 		MySQLPassword:     getEnv("MYSQL_PASSWORD", ""),
 		MySQLHost:         getEnv("MYSQL_HOST", "127.0.0.1"),

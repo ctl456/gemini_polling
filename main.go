@@ -42,15 +42,19 @@ func main() {
 
 	keyStore := storage.NewKeyStore(db)
 
+	// +++ 新增: 初始化并启动 Key 池 +++
+	keyPool := service.NewKeyPool(keyStore, configManager)
+	keyPool.Start(5 * time.Minute) // 每5分钟与数据库同步一次
+
 	// GenAIService 现在也需要接收 ConfigManager 以便动态获取最新配置
-	genaiService := service.NewGenAIService(configManager, keyStore)
+	genaiService := service.NewGenAIService(configManager, keyStore, keyPool)
 
 	// 设置为每小时扫描一次
-	healthChecker := service.NewKeyHealthChecker(keyStore, genaiService)
+	healthChecker := service.NewKeyHealthChecker(keyStore, genaiService, keyPool, configManager)
 	healthChecker.StartPeriodicChecks(1 * time.Hour) // 你可以调整这个间隔
 
 	// 各个 Handler 现在接收 ConfigManager
-	keyHandler := handler.NewKeyHandler(keyStore, genaiService, configManager, healthChecker)
+	keyHandler := handler.NewKeyHandler(keyStore, genaiService, configManager, healthChecker, keyPool)
 	chatHandler := handler.NewChatHandler(genaiService)
 	configHandler := handler.NewConfigHandler(configManager)
 

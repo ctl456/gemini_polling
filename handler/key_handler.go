@@ -13,18 +13,19 @@ import (
 type KeyHandler struct {
 	store         *storage.KeyStore
 	genaiService  *service.GenAIService
-	adminAPIKey   string // 保存 admin key 用于登录验证
 	configManager *config.Manager
 	healthChecker *service.KeyHealthChecker
+	keyPool       *service.KeyPool
 }
 
 // +修改: 更新 NewKeyHandler 的签名
-func NewKeyHandler(store *storage.KeyStore, genaiService *service.GenAIService, manager *config.Manager, checker *service.KeyHealthChecker) *KeyHandler {
+func NewKeyHandler(store *storage.KeyStore, genaiService *service.GenAIService, manager *config.Manager, checker *service.KeyHealthChecker, keyPool *service.KeyPool) *KeyHandler {
 	return &KeyHandler{
 		store:         store,
 		genaiService:  genaiService,
 		configManager: manager,
-		healthChecker: checker, // --- 修改 ---
+		healthChecker: checker,
+		keyPool:       keyPool,
 	}
 }
 
@@ -226,7 +227,7 @@ func (h *KeyHandler) DeleteKey(c *gin.Context) {
 
 // ListBannedKeys 列出所有被临时禁用的 Key
 func (h *KeyHandler) ListBannedKeys(c *gin.Context) {
-	bannedKeys, err := h.genaiService.GetBannedKeysInfo()
+	bannedKeys, err := h.keyPool.GetBannedKeysInfo()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取临时禁用列表失败: " + err.Error()})
 		return
