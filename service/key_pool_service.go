@@ -187,3 +187,13 @@ func (p *KeyPool) GetBannedKeysInfo() ([]BannedKeyInfo, error) {
 
 	return results, nil
 }
+
+// GetBannedKeyCount returns the number of keys currently on cooldown.
+func (p *KeyPool) GetBannedKeyCount() int {
+	count := 0
+	p.cooldownKeys.Range(func(key, value interface{}) bool {
+		count++
+		return true
+	})
+	return count
+}

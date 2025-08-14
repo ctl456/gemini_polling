@@ -105,6 +105,7 @@ func main() {
 			keysGroup.POST("/batch-add", keyHandler.BatchAddKeys)
 			keysGroup.POST("/batch-delete", keyHandler.BatchDeleteKeys)
 			keysGroup.POST("/:id/check", keyHandler.CheckSingleKey)
+			keysGroup.GET("/stats", keyHandler.GetKeyStats)
 		}
 
 		settingsGroup := adminApiGroup.Group("/settings")

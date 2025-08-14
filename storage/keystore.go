@@ -196,3 +196,13 @@ func (s *KeyStore) FindAllByIDs(ids []uint) ([]model.APIKey, error) {
 	}
 	return keys, nil
 }
+
+// GetKeyCounts returns the counts of enabled and disabled keys.
+func (s *KeyStore) GetKeyCounts() (enabledCount int64, disabledCount int64, err error) {
+	err = s.db.Model(&model.APIKey{}).Where("enabled = ?", true).Count(&enabledCount).Error
+	if err != nil {
+		return
+	}
+	err = s.db.Model(&model.APIKey{}).Where("enabled = ?", false).Count(&disabledCount).Error
+	return
+}

@@ -227,17 +227,65 @@ func (h *KeyHandler) DeleteKey(c *gin.Context) {
 
 // ListBannedKeys 列出所有被临时禁用的 Key
 func (h *KeyHandler) ListBannedKeys(c *gin.Context) {
+	// 1. Get pagination parameters from query
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+
+	// 2. Get all banned keys from the pool
 	bannedKeys, err := h.keyPool.GetBannedKeysInfo()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取临时禁用列表失败: " + err.Error()})
 		return
 	}
 
-	// 为了与前端分页组件兼容，即使我们不真的分页，也返回相似的结构
+	// 3. Manually paginate the results
+	total := len(bannedKeys)
+	start := (page - 1) * pageSize
+	end := start + pageSize
+
+	// Bounds check for slicing
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	var paginatedKeys []service.BannedKeyInfo
+	if start < end {
+		paginatedKeys = bannedKeys[start:end]
+	} else {
+		paginatedKeys = []service.BannedKeyInfo{}
+	}
+
+	// 4. Return paginated response
 	c.JSON(http.StatusOK, gin.H{
-		"keys":        bannedKeys,
-		"total_count": len(bannedKeys),
-		"page":        1,
-		"page_size":   len(bannedKeys),
+		"keys":        paginatedKeys,
+		"total_count": total,
+		"page":        page,
+		"page_size":   pageSize,
+	})
+}
+
+// GetKeyStats returns statistics about the keys.
+func (h *KeyHandler) GetKeyStats(c *gin.Context) {
+	enabledCount, disabledCount, err := h.store.GetKeyCounts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get key counts: " + err.Error()})
+		return
+	}
+
+	bannedCount := h.keyPool.GetBannedKeyCount()
+
+	c.JSON(http.StatusOK, gin.H{
+		"enabled_count":  enabledCount,
+		"disabled_count": disabledCount,
+		"banned_count":   bannedCount,
 	})
 }

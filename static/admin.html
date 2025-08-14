@@ -160,6 +160,34 @@
 <!-- Main Content -->
 <div class="container mt-4">
 
+    <!-- Key Stats Cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="card text-center h-100" style="border-left: 5px solid var(--success-color);">
+                <div class="card-body">
+                    <h5 class="card-title text-success"><i class="bi bi-check-circle-fill me-2"></i>已启用</h5>
+                    <p class="card-text fs-2 fw-bold" id="enabled-count">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center h-100" style="border-left: 5px solid var(--danger-color);">
+                <div class="card-body">
+                    <h5 class="card-title text-danger"><i class="bi bi-x-circle-fill me-2"></i>已禁用</h5>
+                    <p class="card-text fs-2 fw-bold" id="disabled-count">0</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center h-100" style="border-left: 5px solid var(--primary-color);">
+                <div class="card-body">
+                    <h5 class="card-title text-primary"><i class="bi bi-hourglass-split me-2"></i>临时禁用</h5>
+                    <p class="card-text fs-2 fw-bold" id="banned-count">0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Batch Add Key Form -->
     <div class="card mb-4">
         <div class="card-header">
@@ -270,6 +298,7 @@
             return;
         }
         toastInstance = new bootstrap.Toast(document.getElementById('app-toast'));
+        fetchKeyStats();
         fetchKeys();
     });
 
@@ -329,16 +358,38 @@
         return `${key.substring(0, 4)}...${key.substring(key.length - 4)}`;
     }
 
+    async function fetchKeyStats() {
+        try {
+            const response = await fetchApi(`${API_BASE_URL}/stats`);
+            if (!response.ok) {
+                // Don't show a toast for a minor error, just log it
+                console.error(`Failed to fetch key stats: ${response.statusText}`);
+                return;
+            }
+            const stats = await response.json();
+            document.getElementById('enabled-count').textContent = stats.enabled_count || 0;
+            document.getElementById('disabled-count').textContent = stats.disabled_count || 0;
+            document.getElementById('banned-count').textContent = stats.banned_count || 0;
+        } catch (error) {
+            console.error(`Error fetching key stats: ${error.message}`);
+        }
+    }
+
     // --- Data Fetching & Rendering ---
     async function fetchKeys() {
         showLoading(true);
         const masterCheckbox = document.querySelector('thead input[type="checkbox"]');
         if (masterCheckbox) masterCheckbox.checked = false;
 
+        // Also refresh stats when fetching keys
+        fetchKeyStats();
+
         // +++ 新增: 根据当前 tab 决定 API URL +++
-        let apiUrl = `${API_BASE_URL}?page=${currentPage}&pageSize=${pageSize}&status=${currentStatusTab}`;
+        let apiUrl;
         if (currentStatusTab === 'banned') {
-            apiUrl = `${API_BASE_URL}/banned`;
+            apiUrl = `${API_BASE_URL}/banned?page=${currentPage}&pageSize=${pageSize}`;
+        } else {
+            apiUrl = `${API_BASE_URL}?page=${currentPage}&pageSize=${pageSize}&status=${currentStatusTab}`;
         }
         try {
             // 使用新的 apiUrl
@@ -570,6 +621,8 @@
             showToast(`批量添加完成: ${result.added} 新增, ${result.skipped} 已存在/跳过.`, 'success');
 
             textarea.value = '';
+            // Refresh stats and the current tab if it's 'enabled'
+            fetchKeyStats();
             if (currentStatusTab === 'enabled') {
                 await fetchKeys();
             }
@@ -594,6 +647,7 @@
             const message = result.is_valid ? `Key ${id} 有效.` : `Key ${id} 无效. 原因: ${result.reason}`;
             showToast(message, result.is_valid ? 'success' : 'error');
             if (shouldRefresh) {
+                fetchKeyStats(); // Refresh stats
                 await fetchKeys(); // Refresh the list to show updated status
             }
         } catch (error) {
@@ -630,6 +684,7 @@
                 }
             }
             showToast('所有选中 Key 校验完成。列表已自动刷新。', 'success');
+            fetchKeyStats(); // Refresh stats
             await fetchKeys(); // Refresh once at the end
         } finally {
             checkBtn.disabled = false;
@@ -649,6 +704,7 @@
             if (currentPage > 1 && document.querySelectorAll('#keys-table-body tr').length === 1) {
                 currentPage--;
             }
+            fetchKeyStats();
             fetchKeys();
         } catch(error) {
             showToast(`删除失败: ${error.message}`, 'error');
@@ -679,7 +735,8 @@
             if (currentPage > newTotalPages) {
                 currentPage = newTotalPages;
             }
-
+            
+            fetchKeyStats();
             fetchKeys();
         } catch(error) {
             showToast(`批量删除失败: ${error.message}`, 'error');
@@ -698,6 +755,8 @@
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || '启动扫描任务失败');
             showToast(result.message, 'info');
+            // Refresh stats after a delay to allow the backend to process
+            setTimeout(fetchKeyStats, 5000);
         } catch (error) {
             showToast(`操作失败: ${error.message}`, 'error');
         } finally {
