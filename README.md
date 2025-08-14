@@ -75,7 +75,7 @@ SERVER_PORT=8080
 # 管理后台的登录密钥，请务必修改为一个复杂的随机字符串！
 ADMIN_API_KEY=your_super_secret_admin_key
 
-# 访问 /v1 和 /v1beta 公共接口所需的 Bearer Token。如果留空，则无需认证即可访问。
+# 访问 /v1 公共接口所需的 Bearer Token。如果留空，则 /v1 路径无需认证即可访问。
 POLLING_API_KEY=your_optional_public_api_key
 
 # --- 轮询策略 ---
@@ -84,6 +84,11 @@ MAX_RETRIES=5
 
 # 当一个 Key 遇到 429 错误时，临时禁用的时长（单位：秒）。
 RATE_LIMIT_COOLDOWN=60
+
+# --- 健康检查 ---
+# 后台 Key 健康检查的并发数。根据你的网络环境和机器性能调整。
+# 7000个key建议设置为 50-100
+HEALTH_CHECK_CONCURRENCY=10
 
 # --- 数据库配置 (二选一) ---
 # 数据库驱动，可选值为: "sqlite3" 或 "mysql" (更改后需要重启程序)
@@ -102,15 +107,40 @@ MYSQL_PASSWORD=your_mysql_password
 
 ### 4. Docker 部署 (推荐)
 
-确保您已经准备好了 `.env` 配置文件。`Dockerfile` 会将项目根目录下的 `.env` 文件复制到镜像中。
-
 ```bash
 # 构建 Docker 镜像
 docker build -t gemini-polling .
 
 # 运行容器
+# sqlite3
 docker run -d --name gemini-app -p 8080:8080 \
-  -v ./data:/app/data \
+  -v $(pwd)/data:/app/data \
+  -e SERVER_PORT="8080" \
+  -e ADMIN_API_KEY="请务必修改为一个复杂的随机字符串" \
+  -e POLLING_API_KEY="sk-Tkxxxx(用于对话的密钥)" \
+  -e HEALTH_CHECK_CONCURRENCY="50" \
+  -e MAX_RETRIES="10" \
+  -e RATE_LIMIT_COOLDOWN="7200" \
+  -e DB_DRIVER="sqlite3" \
+  -e SQLITE_PATH="./data/data.db" \
+  --restart always \
+  gemini-polling
+
+# mysql
+docker run -d --name gemini-app -p 8080:8080 \
+  -v $(pwd)/data:/app/data \
+  -e SERVER_PORT="8080" \
+  -e ADMIN_API_KEY="请务必修改为一个复杂的随机字符串" \
+  -e POLLING_API_KEY="sk-Tkxxxx(用于对话的密钥)" \
+  -e HEALTH_CHECK_CONCURRENCY="50" \
+  -e MAX_RETRIES="10" \
+  -e RATE_LIMIT_COOLDOWN="7200" \
+  -e DB_DRIVER="mysql" \
+  -e MYSQL_HOST="127.0.0.1" \
+  -e MYSQL_PORT="3306" \
+  -e MYSQL_DBNAME="gemini_proxy" \
+  -e MYSQL_USER="root" \
+  -e MYSQL_PASSWORD="your_mysql_password" \
   --restart always \
   gemini-polling
 ```

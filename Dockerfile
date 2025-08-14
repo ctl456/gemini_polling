@@ -42,7 +42,7 @@ COPY static/ ./static/
 # 复制 .env 配置文件
 # 注意：在生产环境中，更推荐使用 Docker 的 secrets 或环境变量来管理敏感信息
 # 但为了方便，这里我们直接复制 .env 文件
-COPY .env ./.env
+# COPY .env ./.env
 
 # 暴露应用程序在 .env 中配置的端口 (默认为 8080)
 # 这只是元数据，实际端口映射在 `docker run` 或 `docker-compose` 中完成
