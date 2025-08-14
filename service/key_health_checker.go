@@ -190,9 +190,9 @@ func (c *KeyHealthChecker) checkDisabledKeys() {
 // checkKeyStatus uses a lightweight API call to check the status of a key.
 func (c *KeyHealthChecker) checkKeyStatus(apiKey string) (int, string) {
 	// 使用 'POST models:countTokens' 请求作为健康检查，因为它能更准确地反映生成类API的速率限制状态。
-	// 我们使用 gemini-pro，因为它是一个常用模型。
-	const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:countTokens"
-	const requestBody = `{"contents":[{"parts":[{"text":"hi"}]}]}`
+	// 我们使用 gemini-2.5-pro，因为它是一个常用模型。
+	const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+	const requestBody = `{"contents":[{"parts":[{"text":"Explain how AI works in a few words"}]}]}`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
