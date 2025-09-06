@@ -15,7 +15,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormlogger "gorm.io/gorm/logger"
 	_ "modernc.org/sqlite"
 )
 
@@ -41,7 +41,7 @@ func InitDB(cfg *config.Config) (*gorm.DB, error) {
 
 	// 配置 GORM 选项
 	gormConfig := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent), // 关闭 SQL 日志以提升性能
+		Logger: gormlogger.Default.LogMode(gormlogger.Silent), // 关闭 SQL 日志以提升性能
 	}
 
 	db, err := gorm.Open(dialector, gormConfig)
