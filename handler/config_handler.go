@@ -31,6 +31,17 @@ func (h *ConfigHandler) GetSettings(c *gin.Context) {
 		"MYSQL_DBNAME":        currentConfig.MySQLDBName,
 		"MAX_RETRIES":         currentConfig.MaxRetries,
 		"RATE_LIMIT_COOLDOWN": int(currentConfig.RateLimitCooldown.Seconds()),
+		"HEALTH_CHECK_CONCURRENCY": currentConfig.HealthCheckConcurrency,
+		"LOG_LEVEL":          currentConfig.LogLevel,
+		"LOG_TO_FILE":        currentConfig.LogToFile,
+		"LOG_FILE":           currentConfig.LogFile,
+		"MAX_LOG_SIZE_MB":    currentConfig.MaxLogSizeMB,
+		"MAX_LOG_BACKUPS":    currentConfig.MaxLogBackups,
+		"MAX_LOG_AGE_DAYS":   currentConfig.MaxLogAgeDays,
+		"MIN_HEALTH_SCORE":   currentConfig.MinHealthScore,
+		"MAX_429_COUNT":      currentConfig.Max429Count,
+		"RECOVERY_BONUS":     currentConfig.RecoveryBonus,
+		"PENALTY_FACTOR":     currentConfig.PenaltyFactor,
 	}
 	c.JSON(http.StatusOK, safeSettings)
 }

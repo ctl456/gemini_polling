@@ -29,6 +29,20 @@ type Config struct {
 	MySQLHost         string
 	MySQLPort         string
 	MySQLDBName       string
+	
+	// 日志配置
+	LogLevel          string
+	LogFile           string
+	LogToFile         bool
+	MaxLogSizeMB      int
+	MaxLogBackups     int
+	MaxLogAgeDays     int
+	
+	// 新增：智能Key管理配置
+	MinHealthScore    int     `json:"min_health_score"`     // 最小健康分数阈值
+	Max429Count       int     `json:"max_429_count"`        // 最大429次数阈值
+	RecoveryBonus     int     `json:"recovery_bonus"`        // 成功恢复的健康分数奖励
+	PenaltyFactor     float64 `json:"penalty_factor"`       // 429惩罚系数
 }
 
 // Manager 结构体用于管理全局配置，并支持热重载
@@ -101,6 +115,51 @@ func loadFromFile() (*Config, error) {
 		healthCheckConcurrency = 10
 	}
 
+	maxLogSizeMB, err := strconv.Atoi(getEnv("MAX_LOG_SIZE_MB", "100"))
+	if err != nil {
+		fmt.Printf("警告: MAX_LOG_SIZE_MB 值无效, 使用默认值 100。错误: %v\n", err)
+		maxLogSizeMB = 100
+	}
+
+	maxLogBackups, err := strconv.Atoi(getEnv("MAX_LOG_BACKUPS", "5"))
+	if err != nil {
+		fmt.Printf("警告: MAX_LOG_BACKUPS 值无效, 使用默认值 5。错误: %v\n", err)
+		maxLogBackups = 5
+	}
+
+	maxLogAgeDays, err := strconv.Atoi(getEnv("MAX_LOG_AGE_DAYS", "30"))
+	if err != nil {
+		fmt.Printf("警告: MAX_LOG_AGE_DAYS 值无效, 使用默认值 30。错误: %v\n", err)
+		maxLogAgeDays = 30
+	}
+
+	logToFile := getEnv("LOG_TO_FILE", "false") == "true"
+
+	// 新增：智能Key管理配置
+	minHealthScore, err := strconv.Atoi(getEnv("MIN_HEALTH_SCORE", "30"))
+	if err != nil {
+		fmt.Printf("警告: MIN_HEALTH_SCORE 值无效, 使用默认值 30。错误: %v\n", err)
+		minHealthScore = 30
+	}
+
+	max429Count, err := strconv.Atoi(getEnv("MAX_429_COUNT", "20"))
+	if err != nil {
+		fmt.Printf("警告: MAX_429_COUNT 值无效, 使用默认值 20。错误: %v\n", err)
+		max429Count = 20
+	}
+
+	recoveryBonus, err := strconv.Atoi(getEnv("RECOVERY_BONUS", "5"))
+	if err != nil {
+		fmt.Printf("警告: RECOVERY_BONUS 值无效, 使用默认值 5。错误: %v\n", err)
+		recoveryBonus = 5
+	}
+
+	penaltyFactor, err := strconv.ParseFloat(getEnv("PENALTY_FACTOR", "1.5"), 64)
+	if err != nil {
+		fmt.Printf("警告: PENALTY_FACTOR 值无效, 使用默认值 1.5。错误: %v\n", err)
+		penaltyFactor = 1.5
+	}
+
 	cfg := &Config{
 		Port:              getEnv("SERVER_PORT", "8080"),
 		AdminAPIKey:       getEnv("ADMIN_API_KEY", "fallback-admin-key"),
@@ -115,6 +174,16 @@ func loadFromFile() (*Config, error) {
 		MySQLHost:         getEnv("MYSQL_HOST", "127.0.0.1"),
 		MySQLPort:         getEnv("MYSQL_PORT", "3306"),
 		MySQLDBName:       getEnv("MYSQL_DBNAME", "test_db"),
+		LogLevel:          getEnv("LOG_LEVEL", "INFO"),
+		LogFile:           getEnv("LOG_FILE", "./logs/gemini_polling.log"),
+		LogToFile:         logToFile,
+		MaxLogSizeMB:      maxLogSizeMB,
+		MaxLogBackups:     maxLogBackups,
+		MaxLogAgeDays:     maxLogAgeDays,
+		MinHealthScore:    minHealthScore,
+		Max429Count:       max429Count,
+		RecoveryBonus:     recoveryBonus,
+		PenaltyFactor:     penaltyFactor,
 	}
 
 	if cfg.DBDriver == "mysql" {

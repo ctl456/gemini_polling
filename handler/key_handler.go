@@ -86,6 +86,21 @@ func (h *KeyHandler) ScanAllKeysHandler(c *gin.Context) {
 	})
 }
 
+// +新增: ScanAllKeysWithProgressHandler 用于处理带进度显示的手动扫描请求
+func (h *KeyHandler) ScanAllKeysWithProgressHandler(c *gin.Context) {
+	// 在后台运行带进度显示的扫描，立即返回响应
+	go h.healthChecker.RunAllKeysCheckWithProgress()
+	c.JSON(http.StatusOK, gin.H{
+		"message": "已启动带进度显示的健康检查任务，可通过进度API查看检查进度。",
+	})
+}
+
+// +新增: GetHealthCheckProgressHandler 获取健康检查进度
+func (h *KeyHandler) GetHealthCheckProgressHandler(c *gin.Context) {
+	progress := h.healthChecker.GetProgress()
+	c.JSON(http.StatusOK, progress)
+}
+
 // BatchAddKeys 批量添加 Keys
 func (h *KeyHandler) BatchAddKeys(c *gin.Context) {
 	var json struct {
@@ -185,6 +200,20 @@ func (h *KeyHandler) BatchDeleteKeys(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Batch delete complete",
+		"deleted": deletedCount,
+	})
+}
+
+// DeleteAllDisabledKeys 一键删除所有已禁用的key
+func (h *KeyHandler) DeleteAllDisabledKeys(c *gin.Context) {
+	deletedCount, err := h.store.DeleteAllDisabledKeys()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete disabled keys: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "All disabled keys deleted successfully",
 		"deleted": deletedCount,
 	})
 }

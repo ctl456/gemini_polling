@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"gemini_polling/config"
 	"gemini_polling/handler"
+	"gemini_polling/logger"
 	"gemini_polling/middleware"
 	"gemini_polling/service"
 	"gemini_polling/storage"
-	"log"
 	"net/http"
 	"time"
 
@@ -18,27 +18,38 @@ func main() {
 	// 初始化配置管理器
 	configManager, err := config.InitConfigManager()
 	if err != nil {
-		log.Fatalf("无法初始化配置: %v", err)
+		fmt.Printf("无法初始化配置: %v\n", err)
+		return
 	}
 
 	// 首次获取配置
 	cfg := configManager.Get()
 
+	// 初始化日志系统
+	logger.InitLogger(
+		logger.ParseLogLevel(cfg.LogLevel),
+		cfg.LogToFile,
+		cfg.LogFile,
+		cfg.MaxLogSizeMB,
+		cfg.MaxLogBackups,
+		cfg.MaxLogAgeDays,
+	)
+
 	// ... 日志警告 ...
 	if cfg.AdminAPIKey == "fallback-admin-key" || cfg.AdminAPIKey == "" {
-		log.Println("警告: ADMIN_API_KEY 未设置或使用的是默认值。为了安全，请在 .env 文件或环境变量中设置一个复杂的值。")
+		logger.Warn("ADMIN_API_KEY 未设置或使用的是默认值。为了安全，请在 .env 文件或环境变量中设置一个复杂的值。")
 	}
 	if cfg.PollingAPIKey == "" {
-		log.Println("警告: POLLING_API_KEY 未设置。/v1 路径将无需认证即可访问。")
+		logger.Warn("POLLING_API_KEY 未设置。/v1 路径将无需认证即可访问。")
 	}
 
 	// 注意：数据库配置是启动时确定的，通常不建议热重载数据库连接。
 	// 所以数据库初始化仍然使用首次加载的配置。
 	db, err := storage.InitDB(cfg)
 	if err != nil {
-		log.Fatalf("无法初始化数据库: %v", err)
+		logger.Fatal("无法初始化数据库: %v", err)
 	}
-	log.Println("数据库初始化成功")
+	logger.Info("数据库初始化成功")
 
 	keyStore := storage.NewKeyStore(db)
 
@@ -97,6 +108,8 @@ func main() {
 		{
 			// ... keys 路由不变
 			keysGroup.POST("/scan", keyHandler.ScanAllKeysHandler) // 统一的扫描入口
+			keysGroup.POST("/scan-with-progress", keyHandler.ScanAllKeysWithProgressHandler) // 带进度显示的扫描入口
+			keysGroup.GET("/progress", keyHandler.GetHealthCheckProgressHandler) // 获取检查进度
 			keysGroup.POST("", keyHandler.AddKey)
 			keysGroup.GET("", keyHandler.ListKeys)
 			// +++ 新增路由 +++
@@ -104,6 +117,7 @@ func main() {
 			keysGroup.DELETE("/:id", keyHandler.DeleteKey)
 			keysGroup.POST("/batch-add", keyHandler.BatchAddKeys)
 			keysGroup.POST("/batch-delete", keyHandler.BatchDeleteKeys)
+			keysGroup.DELETE("/disabled", keyHandler.DeleteAllDisabledKeys) // 一键删除所有已禁用的key
 			keysGroup.POST("/:id/check", keyHandler.CheckSingleKey)
 			keysGroup.GET("/stats", keyHandler.GetKeyStats)
 		}
@@ -118,18 +132,18 @@ func main() {
 
 	// ... (服务器启动日志不变)
 	serverAddr := fmt.Sprintf(":%s", cfg.Port)
-	log.Println("=========================================================")
-	log.Printf("  服务器正在启动，监听地址: http://localhost%s", serverAddr)
-	log.Printf("  管理后台登录地址:     http://localhost%s/admin/login.html", serverAddr)
-	log.Println("---")
-	log.Printf("  聊天 API Endpoint:      http://localhost%s/v1/chat/completions", serverAddr)
-	log.Printf("  Gemini 原生格式 API:    http://localhost%s/v1beta/models/gemini-pro:generateContent", serverAddr)
-	log.Printf("  访问 /v1 路径认证:     %s", tern(cfg.PollingAPIKey != "", "Bearer Token", "无"))
-	log.Println("=========================================================")
+	logger.Infoln("=========================================================")
+	logger.Info("  服务器正在启动，监听地址: http://localhost%s", serverAddr)
+	logger.Info("  管理后台登录地址:     http://localhost%s/admin/login.html", serverAddr)
+	logger.Infoln("---")
+	logger.Info("  聊天 API Endpoint:      http://localhost%s/v1/chat/completions", serverAddr)
+	logger.Info("  Gemini 原生格式 API:    http://localhost%s/v1beta/models/gemini-pro:generateContent", serverAddr)
+	logger.Info("  访问 /v1 路径认证:     %s", tern(cfg.PollingAPIKey != "", "Bearer Token", "无"))
+	logger.Infoln("=========================================================")
 
 	// 注意：服务端口是启动时绑定的，不能热重载。
 	if err := router.Run(serverAddr); err != nil {
-		log.Fatalf("启动 Gin 服务器失败: %v", err)
+		logger.Fatal("启动 Gin 服务器失败: %v", err)
 	}
 }
 

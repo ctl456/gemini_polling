@@ -7,6 +7,7 @@ import (
 	"gemini_polling/model"
 	"gemini_polling/storage"
 	"log"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -26,6 +27,21 @@ type KeyPool struct {
 	// A separate map to track keys that are temporarily on cooldown (e.g., due to 429).
 	// This prevents them from being added back to the available pool immediately.
 	cooldownKeys sync.Map // map[uint]time.Time
+	
+	// 新增：智能key管理
+	keyStats      map[uint]*KeyStats
+}
+
+// KeyStats 用于跟踪key的统计信息
+type KeyStats struct {
+	LastUsedAt      time.Time
+	Last429At       time.Time
+	SuccessCount    int
+	FailureCount    int
+	RateLimitCount  int
+	HealthScore     int
+	NextAvailableAt time.Time
+	IsOnCooldown    bool
 }
 
 // NewKeyPool creates a new KeyPool service.
@@ -34,6 +50,7 @@ func NewKeyPool(keyStore *storage.KeyStore, configManager *config.Manager) *KeyP
 		keyStore:      keyStore,
 		configManager: configManager,
 		allKeys:       make(map[uint]*model.APIKey),
+		keyStats:      make(map[uint]*KeyStats),
 	}
 }
 
@@ -115,52 +132,258 @@ func (p *KeyPool) refresh() {
 	log.Printf("[Key Pool] 刷新完成。数据库中共有 %d 个启用 Key，当前可用 %d 个。", len(p.allKeys), refreshedCount)
 }
 
-// GetKey retrieves an available key from the pool.
-// It blocks until a key is available.
+// GetKey retrieves an available key from the pool using intelligent selection.
 func (p *KeyPool) GetKey() (*model.APIKey, error) {
+	// 首先尝试获取智能选择的key
+	if key := p.getBestAvailableKey(); key != nil {
+		return key, nil
+	}
+	
+	// 如果没有可用key，等待并重试
 	select {
 	case key, ok := <-p.availableKeys:
 		if !ok {
 			return nil, errors.New("key channel is closed")
 		}
 		return key, nil
-	case <-time.After(30 * time.Second): // Add a timeout to prevent indefinite blocking
+	case <-time.After(30 * time.Second):
 		return nil, ErrNoAvailableKeys
 	}
 }
 
-// ReturnKey returns a key to the pool, optionally putting it on cooldown.
+// getBestAvailableKey 使用智能算法选择最佳可用key
+func (p *KeyPool) getBestAvailableKey() *model.APIKey {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	
+	var availableKeys []*model.APIKey
+	now := time.Now()
+	cfg := p.configManager.Get()
+	
+	// 收集所有可用的key
+	for _, key := range p.allKeys {
+		stats := p.keyStats[key.ID]
+		
+		// 检查key是否可用
+		if stats != nil {
+			// 如果key在冷却中且未到时间，跳过
+			if stats.IsOnCooldown && now.Before(stats.NextAvailableAt) {
+				continue
+			}
+			
+			// 如果key健康分数太低，跳过
+			if stats.HealthScore < cfg.MinHealthScore {
+				continue
+			}
+			
+			// 如果429次数过多，跳过
+			if stats.RateLimitCount > cfg.Max429Count {
+				continue
+			}
+			
+			// 如果最近有429记录，根据时间判断是否跳过
+			if !stats.Last429At.IsZero() {
+				timeSince429 := now.Sub(stats.Last429At)
+				// 如果429发生在最近1小时内，降低选择概率
+				if timeSince429 < time.Hour {
+					if rand.Float32() > 0.1 { // 90%概率跳过
+						continue
+					}
+				}
+			}
+		}
+		
+		availableKeys = append(availableKeys, key)
+	}
+	
+	if len(availableKeys) == 0 {
+		return nil
+	}
+	
+	// 根据健康分数加权随机选择
+	return p.selectKeyByWeight(availableKeys)
+}
+
+// selectKeyByWeight 根据健康分数加权随机选择key
+func (p *KeyPool) selectKeyByWeight(keys []*model.APIKey) *model.APIKey {
+	if len(keys) == 0 {
+		return nil
+	}
+	
+	if len(keys) == 1 {
+		return keys[0]
+	}
+	
+	// 计算总权重
+	totalWeight := 0
+	weights := make([]int, len(keys))
+	for i, key := range keys {
+		stats := p.keyStats[key.ID]
+		weight := 50 // 基础权重
+		
+		if stats != nil {
+			weight = stats.HealthScore
+			// 根据最近的成功率调整权重
+			if stats.SuccessCount+stats.FailureCount > 0 {
+				successRate := float64(stats.SuccessCount) / float64(stats.SuccessCount+stats.FailureCount)
+				weight = int(float64(weight) * successRate)
+			}
+		}
+		
+		// 确保权重不为0
+		if weight < 1 {
+			weight = 1
+		}
+		
+		weights[i] = weight
+		totalWeight += weight
+	}
+	
+	// 加权随机选择
+	randomWeight := rand.Intn(totalWeight)
+	currentWeight := 0
+	
+	for i, weight := range weights {
+		currentWeight += weight
+		if randomWeight < currentWeight {
+			return keys[i]
+		}
+	}
+	
+	return keys[len(keys)-1]
+}
+
+// ReturnKey returns a key to the pool, optionally putting it on cooldown with intelligent strategy.
 func (p *KeyPool) ReturnKey(key *model.APIKey, isRateLimited bool) {
 	if key == nil {
 		return
 	}
 
-	if isRateLimited {
-		cooldownDuration := p.configManager.Get().RateLimitCooldown
-		cooldownUntil := time.Now().Add(cooldownDuration)
-		p.cooldownKeys.Store(key.ID, cooldownUntil)
-
-		log.Printf("[Key Pool] Key ID %d 因速率限制进入冷却，时长: %v", key.ID, cooldownDuration)
-
-		// After the cooldown, return the key to the available pool.
-		time.AfterFunc(cooldownDuration, func() {
-			p.cooldownKeys.Delete(key.ID)
-			// Before returning, double-check if the key is still considered enabled in the main map.
-			p.mu.RLock()
-			_, stillExists := p.allKeys[key.ID]
-			p.mu.RUnlock()
-
-			if stillExists {
-				p.availableKeys <- key
-				log.Printf("[Key Pool] Key ID %d 冷却结束，已返回可用池。", key.ID)
-			} else {
-				log.Printf("[Key Pool] Key ID %d 冷却结束，但它已不再是启用状态，不返回可用池。", key.ID)
-			}
-		})
-	} else {
-		// Return directly to the pool if not rate-limited.
-		p.availableKeys <- key
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
+	// 确保stats存在
+	if _, exists := p.keyStats[key.ID]; !exists {
+		p.keyStats[key.ID] = &KeyStats{
+			HealthScore: 100,
+		}
 	}
+	
+	stats := p.keyStats[key.ID]
+	stats.LastUsedAt = time.Now()
+
+	if isRateLimited {
+		// 智能冷却策略
+		p.handleRateLimit(key, stats)
+	} else {
+		// 成功使用，增加健康分数
+		p.handleSuccess(key, stats)
+	}
+
+	// 如果key可用，返回到池中
+	if !stats.IsOnCooldown && stats.HealthScore >= 30 {
+		select {
+		case p.availableKeys <- key:
+		default:
+			log.Printf("[Key Pool] Key ID %d 返回失败，通道已满。", key.ID)
+		}
+	}
+}
+
+// handleRateLimit 处理429限流
+func (p *KeyPool) handleRateLimit(key *model.APIKey, stats *KeyStats) {
+	stats.Last429At = time.Now()
+	stats.RateLimitCount++
+	stats.FailureCount++
+	
+	// 计算智能冷却时间
+	cooldownDuration := p.calculateSmartCooldown(stats)
+	stats.NextAvailableAt = time.Now().Add(cooldownDuration)
+	stats.IsOnCooldown = true
+	
+	// 降低健康分数
+	p.decreaseHealthScore(stats, 20)
+	
+	log.Printf("[Key Pool] Key ID %d 遭遇429，智能冷却 %v (健康分数: %d, 429次数: %d)", 
+		key.ID, cooldownDuration, stats.HealthScore, stats.RateLimitCount)
+	
+	// 异步恢复key
+	go p.scheduleKeyRecovery(key.ID, cooldownDuration)
+}
+
+// handleSuccess 处理成功使用
+func (p *KeyPool) handleSuccess(key *model.APIKey, stats *KeyStats) {
+	stats.SuccessCount++
+	
+	// 增加健康分数，但不超过100
+	cfg := p.configManager.Get()
+	if stats.HealthScore < 100 {
+		p.increaseHealthScore(stats, cfg.RecoveryBonus)
+	}
+	
+	// 如果之前在冷却中，重置状态
+	if stats.IsOnCooldown {
+		stats.IsOnCooldown = false
+		log.Printf("[Key Pool] Key ID %d 冷却结束，已恢复可用 (健康分数: %d)", key.ID, stats.HealthScore)
+	}
+}
+
+// calculateSmartCooldown 计算智能冷却时间
+func (p *KeyPool) calculateSmartCooldown(stats *KeyStats) time.Duration {
+	baseCooldown := p.configManager.Get().RateLimitCooldown
+	cfg := p.configManager.Get()
+	
+	// 根据429频率动态调整冷却时间
+	if stats.RateLimitCount > 10 {
+		// 频繁429，使用更长的冷却时间
+		return time.Duration(float64(baseCooldown) * cfg.PenaltyFactor * 2.0)
+	} else if stats.RateLimitCount > 5 {
+		// 中等频率429
+		return time.Duration(float64(baseCooldown) * cfg.PenaltyFactor * 1.5)
+	} else if stats.RateLimitCount > 2 {
+		// 偶尔429
+		return time.Duration(float64(baseCooldown) * cfg.PenaltyFactor)
+	}
+	
+	return time.Duration(baseCooldown)
+}
+
+// decreaseHealthScore 降低健康分数
+func (p *KeyPool) decreaseHealthScore(stats *KeyStats, amount int) {
+	stats.HealthScore -= amount
+	if stats.HealthScore < 0 {
+		stats.HealthScore = 0
+	}
+}
+
+// increaseHealthScore 增加健康分数
+func (p *KeyPool) increaseHealthScore(stats *KeyStats, amount int) {
+	stats.HealthScore += amount
+	if stats.HealthScore > 100 {
+		stats.HealthScore = 100
+	}
+}
+
+// scheduleKeyRecovery 安排key恢复
+func (p *KeyPool) scheduleKeyRecovery(keyID uint, cooldownDuration time.Duration) {
+	time.AfterFunc(cooldownDuration, func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		
+		if stats, exists := p.keyStats[keyID]; exists {
+			stats.IsOnCooldown = false
+			
+			// 检查key是否仍在allKeys中
+			if key, keyExists := p.allKeys[keyID]; keyExists {
+				select {
+				case p.availableKeys <- key:
+					log.Printf("[Key Pool] Key ID %d 冷却结束，已返回可用池 (健康分数: %d)", keyID, stats.HealthScore)
+				default:
+					log.Printf("[Key Pool] Key ID %d 冷却结束，但通道已满。", keyID)
+				}
+			}
+		}
+	})
 }
 
 // GetBannedKeysInfo returns information about keys currently on cooldown.

@@ -206,3 +206,9 @@ func (s *KeyStore) GetKeyCounts() (enabledCount int64, disabledCount int64, err 
 	err = s.db.Model(&model.APIKey{}).Where("enabled = ?", false).Count(&disabledCount).Error
 	return
 }
+
+// DeleteAllDisabledKeys 删除所有已禁用的key
+func (s *KeyStore) DeleteAllDisabledKeys() (int64, error) {
+	result := s.db.Where("enabled = ?", false).Delete(&model.APIKey{})
+	return result.RowsAffected, result.Error
+}

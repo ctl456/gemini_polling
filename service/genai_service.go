@@ -12,6 +12,7 @@ import (
 	"gemini_polling/storage"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -35,11 +36,31 @@ type BannedKeyInfo struct {
 
 // NewGenAIService 构造函数现在接收完整的配置
 func NewGenAIService(manager *config.Manager, keyStore *storage.KeyStore, keyPool *KeyPool) *GenAIService {
+	// 优化后的 HTTP 连接池配置
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
+		// 连接池大小优化 - 支持更高的并发
+		MaxIdleConns:        500,
+		MaxIdleConnsPerHost: 50,
+		MaxConnsPerHost:     100,
+		
+		// 超时配置优化
+		IdleConnTimeout:     120 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		
+		// 启用 HTTP/2 支持
+		ForceAttemptHTTP2: true,
+		
+		// 优化拨号器配置
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		
+		// 响应头超时和 Expect 100-Continue 超时
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout:  1 * time.Second,
 	}
+	
 	return &GenAIService{
 		keyStore:      keyStore,
 		httpClient:    &http.Client{Timeout: 5 * time.Minute, Transport: transport},

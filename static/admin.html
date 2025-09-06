@@ -233,6 +233,7 @@
                 <button class="btn btn-outline-primary btn-sm" id="scan-all-btn" onclick="scanAllKeys()"><i class="bi-activity"></i> 全面健康检查</button>
                 <button class="btn btn-outline-info btn-sm" id="check-selected-btn" onclick="checkSelectedKeys()"><i class="bi bi-check-circle"></i> 校验选中</button>
                 <button class="btn btn-outline-danger btn-sm" id="delete-selected-btn" onclick="deleteSelectedKeys()"><i class="bi bi-trash"></i> 删除选中</button>
+                <button class="btn btn-danger btn-sm" id="delete-all-disabled-btn" onclick="deleteAllDisabledKeys()" style="display: none;"><i class="bi bi-trash-fill"></i> 一键删除所有已禁用</button>
             </div>
 
             <!-- Table -->
@@ -429,11 +430,19 @@
             // 隐藏不适用于此状态的按钮
             document.getElementById('check-selected-btn').style.display = 'none';
             document.getElementById('delete-selected-btn').style.display = 'none';
-        } else {
+            document.getElementById('delete-all-disabled-btn').style.display = 'none';
+        } else if (currentStatusTab === 'disabled') {
             extraHeader.textContent = '操作';
-            // 显示按钮
+            // 显示按钮，但在已禁用页面显示一键删除按钮
             document.getElementById('check-selected-btn').style.display = 'inline-block';
             document.getElementById('delete-selected-btn').style.display = 'inline-block';
+            document.getElementById('delete-all-disabled-btn').style.display = 'inline-block';
+        } else {
+            extraHeader.textContent = '操作';
+            // 显示按钮，隐藏一键删除按钮
+            document.getElementById('check-selected-btn').style.display = 'inline-block';
+            document.getElementById('delete-selected-btn').style.display = 'inline-block';
+            document.getElementById('delete-all-disabled-btn').style.display = 'none';
         }
         if (keys.length === 0) {
             tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4">没有找到任何 Key</td></tr>`;
@@ -740,6 +749,36 @@
             fetchKeys();
         } catch(error) {
             showToast(`批量删除失败: ${error.message}`, 'error');
+        } finally {
+            deleteBtn.disabled = false;
+        }
+    }
+
+    // 一键删除所有已禁用的key
+    async function deleteAllDisabledKeys() {
+        const disabledCount = parseInt(document.getElementById('disabled-count').textContent) || 0;
+        if (disabledCount === 0) {
+            showToast('没有已禁用的 Key 需要删除', 'info');
+            return;
+        }
+        
+        if (!confirm(`确定要删除所有已禁用的 Key 吗？这将删除 ${disabledCount} 个 Key，此操作不可撤销。`)) return;
+
+        const deleteBtn = document.getElementById('delete-all-disabled-btn');
+        deleteBtn.disabled = true;
+        
+        try {
+            const response = await fetchApi(`${API_BASE_URL}/disabled`, { method: 'DELETE' });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || '删除失败');
+            
+            showToast(`成功删除 ${result.deleted} 个已禁用的 Key`, 'success');
+            
+            // 刷新统计和列表
+            fetchKeyStats();
+            fetchKeys();
+        } catch(error) {
+            showToast(`删除失败: ${error.message}`, 'error');
         } finally {
             deleteBtn.disabled = false;
         }
