@@ -2,10 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"gemini_polling/logger"
 	"gemini_polling/model"
 	"gemini_polling/service"
 	"github.com/gin-gonic/gin"
-	"log"
 	"net/http"
 	"strings"
 )
@@ -61,7 +61,7 @@ func (h *ChatHandler) ChatStream(c *gin.Context) {
 	if err != nil {
 		// 如果流已经开始，就不能再写JSON错误了
 		// 只能通过日志记录错误，因为HTTP头已经发送
-		log.Printf("Error during streaming chat: %v", err)
+		logger.Error("Error during streaming chat: %v", err)
 		// 可以在流中发送一个错误消息
 		c.SSEvent("error", gin.H{"message": err.Error()})
 	}
@@ -89,7 +89,7 @@ func (h *ChatHandler) handleStream(c *gin.Context, req *model.ChatCompletionRequ
 	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 	err := h.genaiService.StreamChat(c.Request.Context(), c.Writer, req)
 	if err != nil {
-		log.Printf("Error during streaming chat: %v", err)
+		logger.Error("Error during streaming chat: %v", err)
 		// 如果流已经开始，无法发送JSON错误。
 		// 可以在流中发送一个错误事件，但注意这并非标准OpenAI行为。
 		// OpenAI标准做法是在流的某个chunk中包含error字段。
@@ -108,7 +108,7 @@ func (h *ChatHandler) handleStream(c *gin.Context, req *model.ChatCompletionRequ
 func (h *ChatHandler) handleNonStream(c *gin.Context, req *model.ChatCompletionRequest) {
 	response, err := h.genaiService.NonStreamChat(c.Request.Context(), req)
 	if err != nil {
-		log.Printf("Error during non-streaming chat: %v", err)
+		logger.Error("Error during non-streaming chat: %v", err)
 		c.JSON(http.StatusInternalServerError, model.OpenAIErrorResponse{
 			Error: model.ErrorDetail{
 				Message: err.Error(),
@@ -143,7 +143,7 @@ func (h *ChatHandler) ListModels(c *gin.Context) {
 	body, statusCode, err := h.genaiService.ListOpenAICompatibleModels(c.Request.Context())
 	if err != nil {
 		// 如果服务层返回错误，记录日志并向客户端返回错误信息
-		log.Printf("获取模型列表时发生错误: %v", err)
+		logger.Error("获取模型列表时发生错误: %v", err)
 		// 使用服务层返回的状态码，或者如果它不可用，则使用500
 		if statusCode == 0 {
 			statusCode = http.StatusInternalServerError
@@ -164,7 +164,7 @@ func (h *ChatHandler) ListModels2(c *gin.Context) {
 	body, statusCode, err := h.genaiService.ListGeminiCompatibleModels(c.Request.Context(), queryParams)
 	if err != nil {
 		// 如果服务层返回错误，记录日志并向客户端返回错误信息
-		log.Printf("获取模型列表时发生错误: %v", err)
+		logger.Error("获取模型列表时发生错误: %v", err)
 		// 使用服务层返回的状态码，或者如果它不可用，则使用500
 		if statusCode == 0 {
 			statusCode = http.StatusInternalServerError
@@ -216,7 +216,7 @@ func (h *ChatHandler) HandleGeminiAction(c *gin.Context) {
 func (h *ChatHandler) proxyGeminiGenerateContent(c *gin.Context, modelName string, requestBody []byte) {
 	respBody, statusCode, err := h.genaiService.GenerateContent(c.Request.Context(), modelName, requestBody)
 	if err != nil {
-		log.Printf("Error proxying GenerateContent for model %s: %v", modelName, err)
+		logger.Error("Error proxying GenerateContent for model %s: %v", modelName, err)
 		if statusCode == 0 {
 			statusCode = http.StatusServiceUnavailable
 		}
@@ -241,7 +241,7 @@ func (h *ChatHandler) proxyGeminiStreamGenerateContent(c *gin.Context, modelName
 
 	err := h.genaiService.StreamGenerateContent(c.Request.Context(), c.Writer, modelName, requestBody)
 	if err != nil {
-		log.Printf("Error proxying StreamGenerateContent for model %s: %v", modelName, err)
+		logger.Error("Error proxying StreamGenerateContent for model %s: %v", modelName, err)
 	}
 }
 
@@ -249,7 +249,7 @@ func (h *ChatHandler) proxyGeminiStreamGenerateContent(c *gin.Context, modelName
 func (h *ChatHandler) proxyGeminiCountTokens(c *gin.Context, modelName string, requestBody []byte) {
 	respBody, statusCode, err := h.genaiService.CountTokens(c.Request.Context(), modelName, requestBody)
 	if err != nil {
-		log.Printf("Error proxying CountTokens for model %s: %v", modelName, err)
+		logger.Error("Error proxying CountTokens for model %s: %v", modelName, err)
 		if statusCode == 0 {
 			statusCode = http.StatusServiceUnavailable
 		}

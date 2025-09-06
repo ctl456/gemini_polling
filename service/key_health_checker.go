@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 	"gemini_polling/config"
+	"gemini_polling/logger"
 	"gemini_polling/model"
 	"gemini_polling/storage"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -41,18 +41,18 @@ type KeyHealthChecker struct {
 
 // CheckProgress 用于跟踪健康检查进度
 type CheckProgress struct {
-	mu                sync.Mutex
-	TotalKeys         int
-	ProcessedKeys     int32
-	EnabledKeys       int
-	DisabledKeys      int
-	StartTime         time.Time
-	LastUpdate        time.Time
-	RateLimitedCount  int32
-	InvalidCount      int32
-	RecoveredCount    int32
-	CurrentCheckType  string
-	IsActive          bool
+	mu               sync.Mutex
+	TotalKeys        int
+	ProcessedKeys    int32
+	EnabledKeys      int
+	DisabledKeys     int
+	StartTime        time.Time
+	LastUpdate       time.Time
+	RateLimitedCount int32
+	InvalidCount     int32
+	RecoveredCount   int32
+	CurrentCheckType string
+	IsActive         bool
 }
 
 // ProgressInfo 用于向前端返回进度信息
@@ -84,7 +84,7 @@ func NewKeyHealthChecker(ks *storage.KeyStore, gs *GenAIService, kp *KeyPool, cm
 
 // StartPeriodicChecks starts a background goroutine to periodically run all health checks.
 func (c *KeyHealthChecker) StartPeriodicChecks(interval time.Duration) {
-	log.Printf("统一 Key 健康检查服务已启动，检查间隔: %v", interval)
+	logger.Info("统一 Key 健康检查服务已启动，检查间隔: %v", interval)
 	go func() {
 		time.Sleep(10 * time.Second) // Initial delay before the first run
 		c.RunAllChecks()
@@ -117,7 +117,7 @@ func (c *KeyHealthChecker) GetProgress() ProgressInfo {
 
 	if c.progress.IsActive {
 		info.ElapsedTime = time.Since(c.progress.StartTime).Round(time.Second).String()
-		
+
 		// 计算 ETA
 		if info.ProcessedKeys > 0 {
 			avgTimePerKey := time.Since(c.progress.StartTime).Seconds() / float64(info.ProcessedKeys)
@@ -125,7 +125,7 @@ func (c *KeyHealthChecker) GetProgress() ProgressInfo {
 			etaSeconds := avgTimePerKey * float64(remainingKeys)
 			info.ETA = time.Duration(etaSeconds * float64(time.Second)).Round(time.Second).String()
 		}
-		
+
 		// 计算进度百分比
 		if c.progress.TotalKeys > 0 {
 			info.Progress = float64(info.ProcessedKeys) / float64(c.progress.TotalKeys) * 100
@@ -139,7 +139,7 @@ func (c *KeyHealthChecker) GetProgress() ProgressInfo {
 func (c *KeyHealthChecker) startCheck(checkType string, totalKeys int) {
 	c.progress.mu.Lock()
 	defer c.progress.mu.Unlock()
-	
+
 	c.progress.TotalKeys = totalKeys
 	c.progress.ProcessedKeys = 0
 	c.progress.EnabledKeys = 0
@@ -170,27 +170,27 @@ func (c *KeyHealthChecker) finishCheck() {
 
 // RunAllChecks is the entry point for executing all check tasks.
 func (c *KeyHealthChecker) RunAllChecks() {
-	log.Println("================== [Key健康检查开始] ==================")
+	logger.Infoln("================== [Key健康检查开始] ==================")
 	// 获取所有 Key 数量用于进度显示
 	enabledKeys, _ := c.keyStore.GetAllEnabledKeys()
 	disabledKeys, _ := c.keyStore.GetAllDisabledKeys()
 	totalKeys := len(enabledKeys) + len(disabledKeys)
-	
+
 	if totalKeys == 0 {
-		log.Println("[健康检查] 没有 Key 可供扫描。")
+		logger.Infoln("[健康检查] 没有 Key 可供扫描。")
 		return
 	}
-	
-	log.Printf("[健康检查] 开始扫描所有 %d 个 Key（启用: %d, 禁用: %d）", totalKeys, len(enabledKeys), len(disabledKeys))
-	
+
+	logger.Info("[健康检查] 开始扫描所有 %d 个 Key（启用: %d, 禁用: %d）", totalKeys, len(enabledKeys), len(disabledKeys))
+
 	if len(enabledKeys) > 0 {
 		c.checkEnabledKeysWithProgress(enabledKeys)
 	}
 	if len(disabledKeys) > 0 {
 		c.checkDisabledKeysWithProgress(disabledKeys)
 	}
-	
-	log.Println("================== [Key健康检查结束] ==================")
+
+	logger.Infoln("================== [Key健康检查结束] ==================")
 }
 
 // RunAllKeysCheckWithProgress 带进度显示的完整检查
@@ -199,18 +199,18 @@ func (c *KeyHealthChecker) RunAllKeysCheckWithProgress() {
 	enabledKeys, _ := c.keyStore.GetAllEnabledKeys()
 	disabledKeys, _ := c.keyStore.GetAllDisabledKeys()
 	totalKeys := len(enabledKeys) + len(disabledKeys)
-	
+
 	if totalKeys == 0 {
-		log.Println("[健康检查] 没有 Key 可供扫描。")
+		logger.Infoln("[健康检查] 没有 Key 可供扫描。")
 		return
 	}
-	
-	log.Printf("[健康检查] 开始扫描所有 %d 个 Key（启用: %d, 禁用: %d）", totalKeys, len(enabledKeys), len(disabledKeys))
-	
+
+	logger.Info("[健康检查] 开始扫描所有 %d 个 Key（启用: %d, 禁用: %d）", totalKeys, len(enabledKeys), len(disabledKeys))
+
 	c.checkEnabledKeysWithProgress(enabledKeys)
 	c.checkDisabledKeysWithProgress(disabledKeys)
-	
-	log.Println("================== [Key健康检查结束] ==================")
+
+	logger.Infoln("================== [Key健康检查结束] ==================")
 }
 
 // runChecksConcurrently is the core worker pool for checking keys.
@@ -266,20 +266,20 @@ func (c *KeyHealthChecker) processResults(results chan checkResult, checkType st
 			switch result.Status {
 			case KeyStatusRateLimited:
 				rateLimitedCount++
-				log.Printf("  -> [启用Key检查] Key ID %d 检测到速率限制(429)，将进入冷却。原因: %s", result.Key.ID, result.Reason)
+				logger.Debug("  -> [启用Key检查] Key ID %d 检测到速率限制(429)，将进入冷却。原因: %s", result.Key.ID, result.Reason)
 				// Use the keypool's method to handle cooldown
 				c.keyPool.ReturnKey(&result.Key, true)
 			case KeyStatusInvalid:
 				invalidCount++
-				log.Printf("  -> [启用Key检查] Key ID %d 检测为无效(4xx)，将【永久禁用】。原因: %s", result.Key.ID, result.Reason)
+				logger.Debug("  -> [启用Key检查] Key ID %d 检测为无效(4xx)，将【永久禁用】。原因: %s", result.Key.ID, result.Reason)
 				c.keyStore.Disable(result.Key.ID, "例行检查发现Key无效: "+result.Reason)
 			}
 		case "disabled":
 			if result.Status == KeyStatusOK {
 				recoveredCount++
-				log.Printf("  -> [禁用Key检查] Key ID %d 验证通过，将【重新启用】。", result.Key.ID)
+				logger.Info("  -> [禁用Key检查] Key ID %d 验证通过，将【重新启用】。", result.Key.ID)
 				if err := c.keyStore.SetEnabled(result.Key.ID, true); err != nil {
-					log.Printf("  -> [错误] 启用 Key ID %d 失败: %v", result.Key.ID, err)
+					logger.Error("  -> [错误] 启用 Key ID %d 失败: %v", result.Key.ID, err)
 				}
 			}
 		}
@@ -287,34 +287,34 @@ func (c *KeyHealthChecker) processResults(results chan checkResult, checkType st
 
 	switch checkType {
 	case "enabled":
-		log.Printf("<== 【已启用】Key 扫描完成。共处理 %d 个结果，临时禁用 %d 个，永久禁用 %d 个。", cap(results), rateLimitedCount, invalidCount)
+		logger.Info("<== 【已启用】Key 扫描完成。共处理 %d 个结果，临时禁用 %d 个，永久禁用 %d 个。", cap(results), rateLimitedCount, invalidCount)
 	case "disabled":
-		log.Printf("<== 【已禁用】Key 扫描完成。共处理 %d 个结果，重新启用了 %d 个。", cap(results), recoveredCount)
+		logger.Info("<== 【已禁用】Key 扫描完成。共处理 %d 个结果，重新启用了 %d 个。", cap(results), recoveredCount)
 	}
 }
 
 // checkEnabledKeys checks all enabled keys.
 func (c *KeyHealthChecker) checkEnabledKeys() {
-	log.Println("==> [健康检查] 开始并发扫描【已启用】的 Key...")
+	logger.Infoln("==> [健康检查] 开始并发扫描【已启用】的 Key...")
 	keys, err := c.keyStore.GetAllEnabledKeys()
 	if err != nil {
-		log.Printf("[错误][健康检查] 扫描时无法获取已启用的 Key: %v", err)
+		logger.Error("[错误][健康检查] 扫描时无法获取已启用的 Key: %v", err)
 		return
 	}
 
 	if len(keys) == 0 {
-		log.Println("[健康检查] 没有已启用的 Key 可供扫描。")
+		logger.Infoln("[健康检查] 没有已启用的 Key 可供扫描。")
 		return
 	}
 
-	log.Printf("[健康检查] 发现 %d 个已启用的 Key，开始检查...", len(keys))
+	logger.Info("[健康检查] 发现 %d 个已启用的 Key，开始检查...", len(keys))
 	c.runChecksConcurrently(keys, "enabled")
 }
 
 // checkEnabledKeysWithProgress 带进度显示的已启用 Key 检查
 func (c *KeyHealthChecker) checkEnabledKeysWithProgress(keys []model.APIKey) {
 	if len(keys) == 0 {
-		log.Println("[健康检查] 没有已启用的 Key 可供扫描。")
+		logger.Infoln("[健康检查] 没有已启用的 Key 可供扫描。")
 		return
 	}
 
@@ -322,48 +322,48 @@ func (c *KeyHealthChecker) checkEnabledKeysWithProgress(keys []model.APIKey) {
 	c.progress.mu.Lock()
 	c.progress.EnabledKeys = len(keys)
 	c.progress.mu.Unlock()
-	
+
 	// 根据数量显示提示信息
 	displayInterval := 1
 	if len(keys) > 1000 {
 		displayInterval = 100
-		log.Printf("[健康检查] 发现 %d 个已启用的 Key，开始检查... (每 %d 个显示一次进度)", len(keys), displayInterval)
+		logger.Info("[健康检查] 发现 %d 个已启用的 Key，开始检查... (每 %d 个显示一次进度)", len(keys), displayInterval)
 	} else if len(keys) > 100 {
 		displayInterval = 50
-		log.Printf("[健康检查] 发现 %d 个已启用的 Key，开始检查... (每 %d 个显示一次进度)", len(keys), displayInterval)
+		logger.Info("[健康检查] 发现 %d 个已启用的 Key，开始检查... (每 %d 个显示一次进度)", len(keys), displayInterval)
 	} else if len(keys) > 50 {
 		displayInterval = 10
-		log.Printf("[健康检查] 发现 %d 个已启用的 Key，开始检查... (每 %d 个显示一次进度)", len(keys), displayInterval)
+		logger.Info("[健康检查] 发现 %d 个已启用的 Key，开始检查... (每 %d 个显示一次进度)", len(keys), displayInterval)
 	} else {
-		log.Printf("[健康检查] 发现 %d 个已启用的 Key，开始检查... (实时显示进度)", len(keys))
+		logger.Info("[健康检查] 发现 %d 个已启用的 Key，开始检查... (实时显示进度)", len(keys))
 	}
-	
+
 	c.runChecksConcurrentlyWithProgress(keys, "enabled")
 	c.finishCheck()
 }
 
 // checkDisabledKeys checks all disabled keys to see if they can be re-enabled.
 func (c *KeyHealthChecker) checkDisabledKeys() {
-	log.Println("==> [健康检查] 开始并发扫描【已禁用】的 Key...")
+	logger.Infoln("==> [健康检查] 开始并发扫描【已禁用】的 Key...")
 	keys, err := c.keyStore.GetAllDisabledKeys()
 	if err != nil {
-		log.Printf("[错误][健康检查] 扫描时无法获取已禁用的 Key: %v", err)
+		logger.Error("[错误][健康检查] 扫描时无法获取已禁用的 Key: %v", err)
 		return
 	}
 
 	if len(keys) == 0 {
-		log.Println("[健康检查] 没有已禁用的 Key 可供扫描。")
+		logger.Infoln("[健康检查] 没有已禁用的 Key 可供扫描。")
 		return
 	}
 
-	log.Printf("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复...", len(keys))
+	logger.Info("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复...", len(keys))
 	c.runChecksConcurrently(keys, "disabled")
 }
 
 // checkDisabledKeysWithProgress 带进度显示的已禁用 Key 检查
 func (c *KeyHealthChecker) checkDisabledKeysWithProgress(keys []model.APIKey) {
 	if len(keys) == 0 {
-		log.Println("[健康检查] 没有已禁用的 Key 可供扫描。")
+		logger.Infoln("[健康检查] 没有已禁用的 Key 可供扫描。")
 		return
 	}
 
@@ -371,22 +371,22 @@ func (c *KeyHealthChecker) checkDisabledKeysWithProgress(keys []model.APIKey) {
 	c.progress.mu.Lock()
 	c.progress.DisabledKeys = len(keys)
 	c.progress.mu.Unlock()
-	
+
 	// 根据数量显示提示信息
 	displayInterval := 1
 	if len(keys) > 1000 {
 		displayInterval = 100
-		log.Printf("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复... (每 %d 个显示一次进度)", len(keys), displayInterval)
+		logger.Info("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复... (每 %d 个显示一次进度)", len(keys), displayInterval)
 	} else if len(keys) > 100 {
 		displayInterval = 50
-		log.Printf("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复... (每 %d 个显示一次进度)", len(keys), displayInterval)
+		logger.Info("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复... (每 %d 个显示一次进度)", len(keys), displayInterval)
 	} else if len(keys) > 50 {
 		displayInterval = 10
-		log.Printf("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复... (每 %d 个显示一次进度)", len(keys), displayInterval)
+		logger.Info("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复... (每 %d 个显示一次进度)", len(keys), displayInterval)
 	} else {
-		log.Printf("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复... (实时显示进度)", len(keys))
+		logger.Info("[健康检查] 发现 %d 个已禁用的 Key，正在尝试恢复... (实时显示进度)", len(keys))
 	}
-	
+
 	c.runChecksConcurrentlyWithProgress(keys, "disabled")
 	c.finishCheck()
 }
@@ -418,7 +418,7 @@ func (c *KeyHealthChecker) runChecksConcurrentlyWithProgress(keys []model.APIKey
 				status, reason := c.checkKeyStatus(key.Key)
 				results <- checkResult{Key: key, Status: status, Reason: reason}
 				c.updateProgress()
-				
+
 				// 定期打印进度 - 根据总数动态调整显示频率
 				progress := c.GetProgress()
 				displayInterval := 1
@@ -429,7 +429,7 @@ func (c *KeyHealthChecker) runChecksConcurrentlyWithProgress(keys []model.APIKey
 				} else if progress.TotalKeys > 50 {
 					displayInterval = 10
 				}
-				
+
 				if progress.ProcessedKeys%displayInterval == 0 || progress.ProcessedKeys == progress.TotalKeys {
 					// 计算速率 - 使用检查开始时间
 					c.progress.mu.Lock()
@@ -437,11 +437,11 @@ func (c *KeyHealthChecker) runChecksConcurrentlyWithProgress(keys []model.APIKey
 					c.progress.mu.Unlock()
 					rate := float64(progress.ProcessedKeys) / elapsed
 					rateStr := fmt.Sprintf("%.1f keys/s", rate)
-					
-					log.Printf("[进度] %s: %d/%d (%.1f%%) - 速率: %s - 已用: %s, 预计剩余: %s", 
+
+					logger.Info("[进度] %s: %d/%d (%.1f%%) - 速率: %s - 已用: %s, 预计剩余: %s",
 						progress.CurrentCheckType,
-						progress.ProcessedKeys, 
-						progress.TotalKeys, 
+						progress.ProcessedKeys,
+						progress.TotalKeys,
 						progress.Progress,
 						rateStr,
 						progress.ElapsedTime,

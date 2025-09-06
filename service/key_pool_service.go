@@ -4,9 +4,9 @@ package service
 import (
 	"errors"
 	"gemini_polling/config"
+	"gemini_polling/logger"
 	"gemini_polling/model"
 	"gemini_polling/storage"
-	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -56,14 +56,14 @@ func NewKeyPool(keyStore *storage.KeyStore, configManager *config.Manager) *KeyP
 
 // Start initializes the pool and begins periodic refresh operations.
 func (p *KeyPool) Start(refreshInterval time.Duration) {
-	log.Println("启动内存 Key 池服务...")
+	logger.Infoln("启动内存 Key 池服务...")
 	p.initialLoad()
 
 	go func() {
 		ticker := time.NewTicker(refreshInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			log.Println("[Key Pool] 定时刷新 Key 列表...")
+			logger.Infoln("[Key Pool] 定时刷新 Key 列表...")
 			p.refresh()
 		}
 	}()
@@ -73,7 +73,7 @@ func (p *KeyPool) Start(refreshInterval time.Duration) {
 func (p *KeyPool) initialLoad() {
 	keys, err := p.keyStore.GetAllEnabledKeys()
 	if err != nil {
-		log.Printf("[错误] Key 池初始化加载失败: %v", err)
+		logger.Error("[错误] Key 池初始化加载失败: %v", err)
 		// Even if it fails, we create the channel to avoid nil panics.
 		p.availableKeys = make(chan *model.APIKey, 1) // Default size
 		return
@@ -92,14 +92,14 @@ func (p *KeyPool) initialLoad() {
 		p.availableKeys <- &key
 	}
 
-	log.Printf("Key 池初始化成功，加载了 %d 个可用的 Key。", len(keys))
+	logger.Info("Key 池初始化成功，加载了 %d 个可用的 Key。", len(keys))
 }
 
 // refresh reloads keys from the database and updates the pool.
 func (p *KeyPool) refresh() {
 	dbKeys, err := p.keyStore.GetAllEnabledKeys()
 	if err != nil {
-		log.Printf("[错误] Key 池刷新失败: %v", err)
+		logger.Error("[错误] Key 池刷新失败: %v", err)
 		return
 	}
 
@@ -129,7 +129,7 @@ func (p *KeyPool) refresh() {
 		}
 	}
 
-	log.Printf("[Key Pool] 刷新完成。数据库中共有 %d 个启用 Key，当前可用 %d 个。", len(p.allKeys), refreshedCount)
+	logger.Info("[Key Pool] 刷新完成。数据库中共有 %d 个启用 Key，当前可用 %d 个。", len(p.allKeys), refreshedCount)
 }
 
 // GetKey retrieves an available key from the pool using intelligent selection.
@@ -285,7 +285,7 @@ func (p *KeyPool) ReturnKey(key *model.APIKey, isRateLimited bool) {
 		select {
 		case p.availableKeys <- key:
 		default:
-			log.Printf("[Key Pool] Key ID %d 返回失败，通道已满。", key.ID)
+			logger.Warn("[Key Pool] Key ID %d 返回失败，通道已满。", key.ID)
 		}
 	}
 }
@@ -304,7 +304,7 @@ func (p *KeyPool) handleRateLimit(key *model.APIKey, stats *KeyStats) {
 	// 降低健康分数
 	p.decreaseHealthScore(stats, 20)
 	
-	log.Printf("[Key Pool] Key ID %d 遭遇429，智能冷却 %v (健康分数: %d, 429次数: %d)", 
+	logger.Info("[Key Pool] Key ID %d 遭遇429，智能冷却 %v (健康分数: %d, 429次数: %d)", 
 		key.ID, cooldownDuration, stats.HealthScore, stats.RateLimitCount)
 	
 	// 异步恢复key
@@ -324,7 +324,7 @@ func (p *KeyPool) handleSuccess(key *model.APIKey, stats *KeyStats) {
 	// 如果之前在冷却中，重置状态
 	if stats.IsOnCooldown {
 		stats.IsOnCooldown = false
-		log.Printf("[Key Pool] Key ID %d 冷却结束，已恢复可用 (健康分数: %d)", key.ID, stats.HealthScore)
+		logger.Info("[Key Pool] Key ID %d 冷却结束，已恢复可用 (健康分数: %d)", key.ID, stats.HealthScore)
 	}
 }
 
@@ -377,9 +377,9 @@ func (p *KeyPool) scheduleKeyRecovery(keyID uint, cooldownDuration time.Duration
 			if key, keyExists := p.allKeys[keyID]; keyExists {
 				select {
 				case p.availableKeys <- key:
-					log.Printf("[Key Pool] Key ID %d 冷却结束，已返回可用池 (健康分数: %d)", keyID, stats.HealthScore)
+					logger.Info("[Key Pool] Key ID %d 冷却结束，已返回可用池 (健康分数: %d)", keyID, stats.HealthScore)
 				default:
-					log.Printf("[Key Pool] Key ID %d 冷却结束，但通道已满。", keyID)
+					logger.Warn("[Key Pool] Key ID %d 冷却结束，但通道已满。", keyID)
 				}
 			}
 		}

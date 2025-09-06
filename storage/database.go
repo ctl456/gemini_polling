@@ -6,8 +6,8 @@ import (
 	"database/sql"
 	"fmt"
 	"gemini_polling/config"
+	"gemini_polling/logger"
 	"gemini_polling/model"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,17 +23,17 @@ func InitDB(cfg *config.Config) (*gorm.DB, error) {
 	var dialector gorm.Dialector
 	switch cfg.DBDriver {
 	case "mysql":
-		log.Println("正在通过 GORM 初始化 MySQL 数据库...")
+		logger.Infoln("正在通过 GORM 初始化 MySQL 数据库...")
 		dialector = mysql.Open(cfg.MySQLDSN)
 	case "sqlite3":
-		log.Println("正在通过 GORM 初始化 SQLite3 数据库...")
+		logger.Infoln("正在通过 GORM 初始化 SQLite3 数据库...")
 		// 在连接前，确保数据库文件所在的目录存在
 		dbPath := cfg.SQLitePath
 		dbDir := filepath.Dir(dbPath)
 		if err := os.MkdirAll(dbDir, 0755); err != nil {
 			return nil, fmt.Errorf("创建数据库目录 %s 失败: %w", dbDir, err)
 		}
-		log.Printf("确保数据库目录 '%s' 已存在。", dbDir)
+		logger.Info("确保数据库目录 '%s' 已存在。", dbDir)
 		dialector = sqlite.Open(dbPath)
 	default:
 		return nil, fmt.Errorf("不支持的数据库驱动: %s", cfg.DBDriver)
@@ -71,19 +71,19 @@ func InitDB(cfg *config.Config) (*gorm.DB, error) {
 		
 		// SQLite 性能优化 PRAGMA 设置
 		if err := optimizeSQLite(sqlDB); err != nil {
-			log.Printf("SQLite 性能优化警告: %v", err)
+			logger.Warn("SQLite 性能优化警告: %v", err)
 		}
 	}
 
-	log.Println("正在进行数据库迁移 (AutoMigrate)...")
+	logger.Infoln("正在进行数据库迁移 (AutoMigrate)...")
 	if err := db.AutoMigrate(&model.APIKey{}); err != nil {
 		return nil, fmt.Errorf("GORM 自动迁移失败: %w", err)
 	}
-	log.Println("api_keys 表已成功初始化/迁移。")
+	logger.Infoln("api_keys 表已成功初始化/迁移。")
 	
 	// 检查是否需要添加新字段的默认值
 	if err := updateExistingKeys(db); err != nil {
-		log.Printf("更新现有记录默认值时出现警告: %v", err)
+		logger.Warn("更新现有记录默认值时出现警告: %v", err)
 	}
 	
 	return db, nil
@@ -96,7 +96,7 @@ func updateExistingKeys(db *gorm.DB) error {
 	db.Model(&model.APIKey{}).Where("health_score IS NULL").Count(&count)
 	
 	if count > 0 {
-		log.Printf("发现 %d 条记录需要更新默认值，正在处理...", count)
+		logger.Info("发现 %d 条记录需要更新默认值，正在处理...", count)
 		
 		// 更新健康分数相关字段
 		result := db.Model(&model.APIKey{}).Where("health_score IS NULL").Updates(map[string]interface{}{
@@ -114,7 +114,7 @@ func updateExistingKeys(db *gorm.DB) error {
 			return fmt.Errorf("更新默认值失败: %w", result.Error)
 		}
 		
-		log.Printf("成功更新 %d 条记录的默认值", result.RowsAffected)
+		logger.Info("成功更新 %d 条记录的默认值", result.RowsAffected)
 	}
 	
 	return nil
@@ -135,7 +135,7 @@ func optimizeSQLite(sqlDB *sql.DB) error {
 
 	for pragma, value := range pragmaSettings {
 		if _, err := sqlDB.Exec(fmt.Sprintf("PRAGMA %s = %s", pragma, value)); err != nil {
-			log.Printf("设置 PRAGMA %s = %s 失败: %v", pragma, value, err)
+			logger.Warn("设置 PRAGMA %s = %s 失败: %v", pragma, value, err)
 			// 不返回错误，因为一些 PRAGMA 可能不被支持
 		}
 	}

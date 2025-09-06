@@ -2,10 +2,10 @@ package handler
 
 import (
 	"gemini_polling/config"
+	"gemini_polling/logger"
 	"gemini_polling/service"
 	"gemini_polling/storage"
 	"github.com/gin-gonic/gin"
-	"log"
 	"net/http"
 	"strconv"
 )
@@ -64,15 +64,15 @@ func (h *KeyHandler) AddKey(c *gin.Context) {
 		return
 	}
 	// 2. 立即进行验证
-	log.Printf("新 Key (ID: %d) 已添加，正在进行即时验证...", key.ID)
+	logger.Info("新 Key (ID: %d) 已添加，正在进行即时验证...", key.ID)
 	isValid, reason := h.genaiService.ValidateAPIKey(key.Key)
 	if !isValid {
-		log.Printf("新 Key (ID: %d) 未通过验证，已自动禁用。原因: %s", key.ID, reason)
+		logger.Warn("新 Key (ID: %d) 未通过验证，已自动禁用。原因: %s", key.ID, reason)
 		h.store.Disable(key.ID, "添加时验证失败: "+reason)
 		// 更新 key 对象的状态以返回给前端
 		key.Enabled = false
 	} else {
-		log.Printf("新 Key (ID: %d) 验证通过。", key.ID)
+		logger.Info("新 Key (ID: %d) 验证通过。", key.ID)
 	}
 	c.JSON(http.StatusOK, key)
 }
@@ -122,7 +122,7 @@ func (h *KeyHandler) BatchAddKeys(c *gin.Context) {
 	// 调用新的、更智能的存储方法
 	added, skipped, err := h.store.AddMultiple(json.Keys)
 	if err != nil {
-		log.Printf("批量添加 Keys 失败: %v", err)
+		logger.Error("批量添加 Keys 失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "批量添加时发生数据库错误: " + err.Error()})
 		return
 	}
@@ -149,7 +149,7 @@ func (h *KeyHandler) CheckSingleKey(c *gin.Context) {
 	isValid, reason := h.genaiService.ValidateAPIKey(key.Key)
 	// 如果校验结果与当前状态不符，则更新数据库
 	if key.Enabled != isValid {
-		log.Printf("Key ID %d status changed to %v based on validation. Reason: %s", id, isValid, reason)
+		logger.Info("Key ID %d status changed to %v based on validation. Reason: %s", id, isValid, reason)
 		h.store.SetEnabled(uint(id), isValid)
 	}
 	c.JSON(http.StatusOK, gin.H{

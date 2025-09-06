@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"gemini_polling/logger"
 	"log"
 	"os"
 	"strconv"
@@ -63,7 +64,7 @@ func InitConfigManager() (*Manager, error) {
 	GlobalConfigManager = &Manager{
 		config: cfg,
 	}
-	log.Println("配置管理器初始化成功。")
+	logger.Infoln("配置管理器初始化成功。")
 	return GlobalConfigManager, nil
 }
 
@@ -87,7 +88,7 @@ func (m *Manager) ReloadAndUpdate() error {
 	defer m.mu.Unlock()
 	m.config = newCfg
 
-	log.Println("配置已成功热重载！")
+	logger.Infoln("配置已成功热重载！")
 	return nil
 }
 

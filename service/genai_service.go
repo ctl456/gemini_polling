@@ -8,10 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"gemini_polling/config" // 引入 config 包
+	"gemini_polling/logger"
 	"gemini_polling/model"
 	"gemini_polling/storage"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,25 +42,25 @@ func NewGenAIService(manager *config.Manager, keyStore *storage.KeyStore, keyPoo
 		MaxIdleConns:        500,
 		MaxIdleConnsPerHost: 50,
 		MaxConnsPerHost:     100,
-		
+
 		// 超时配置优化
 		IdleConnTimeout:     120 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
-		
+
 		// 启用 HTTP/2 支持
 		ForceAttemptHTTP2: true,
-		
+
 		// 优化拨号器配置
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		
+
 		// 响应头超时和 Expect 100-Continue 超时
 		ResponseHeaderTimeout: 30 * time.Second,
-		ExpectContinueTimeout:  1 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
-	
+
 	return &GenAIService{
 		keyStore:      keyStore,
 		httpClient:    &http.Client{Timeout: 5 * time.Minute, Transport: transport},
@@ -92,20 +92,20 @@ func (s *GenAIService) StreamChat(ctx context.Context, w io.Writer, req *model.C
 		if err != nil {
 			lastErr = err
 			if errors.Is(err, ErrNoAvailableKeys) {
-				log.Println("无可用 Key，等待 Key 池释放...")
+				logger.Infoln("无可用 Key，等待 Key 池释放...")
 				time.Sleep(2 * time.Second) // Wait a bit before retrying
 			}
 			continue
 		}
 
-		log.Printf("第 %d 次尝试, 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, req.Model)
+		logger.Info("第 %d 次尝试, 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, req.Model)
 
 		const url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBodyBytes))
 		if err != nil {
 			lastErr = fmt.Errorf("创建 HTTP 请求失败: %w", err)
 			s.keyPool.ReturnKey(activeKey, false) // Return key on failure
-			log.Println(lastErr)
+			logger.Errorln(lastErr)
 			continue
 		}
 
@@ -119,7 +119,7 @@ func (s *GenAIService) StreamChat(ctx context.Context, w io.Writer, req *model.C
 		if err != nil {
 			lastErr = fmt.Errorf("请求 Google API 失败 (Key ID: %d): %w", activeKey.ID, err)
 			s.keyPool.ReturnKey(activeKey, false) // Return key on network failure
-			log.Println(lastErr)
+			logger.Errorln(lastErr)
 			continue
 		}
 		defer resp.Body.Close()
@@ -128,7 +128,7 @@ func (s *GenAIService) StreamChat(ctx context.Context, w io.Writer, req *model.C
 			body, _ := io.ReadAll(resp.Body)
 			errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(body))
 			lastErr = errors.New(errorMsg)
-			log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+			logger.Error("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
 
 			if resp.StatusCode == http.StatusTooManyRequests {
 				s.keyPool.ReturnKey(activeKey, true) // Cooldown
@@ -148,31 +148,31 @@ func (s *GenAIService) StreamChat(ctx context.Context, w io.Writer, req *model.C
 				continue
 			}
 			if _, err := fmt.Fprintf(w, "%s\n\n", line); err != nil {
-				log.Printf("写入响应流失败: %v (客户端可能已断开连接)", err)
+				logger.Warn("写入响应流失败: %v (客户端可能已断开连接)", err)
 				s.keyPool.ReturnKey(activeKey, false)
 				return err
 			}
 			flusher.Flush()
 			if strings.HasSuffix(line, "[DONE]") {
-				log.Printf("请求处理成功 (Key ID: %d), 流已结束。", activeKey.ID)
+				logger.Info("请求处理成功 (Key ID: %d), 流已结束。", activeKey.ID)
 				s.keyPool.ReturnKey(activeKey, false)
 				return nil
 			}
 		}
 
 		if err := scanner.Err(); err != nil {
-			log.Printf("读取上游流时发生错误 (Key ID: %d): %v", activeKey.ID, err)
+			logger.Error("读取上游流时发生错误 (Key ID: %d): %v", activeKey.ID, err)
 			lastErr = err
 			s.keyPool.ReturnKey(activeKey, false)
 			continue
 		}
 
-		log.Printf("请求处理成功 (Key ID: %d), 上游流正常关闭。", activeKey.ID)
+		logger.Info("请求处理成功 (Key ID: %d), 上游流正常关闭。", activeKey.ID)
 		s.keyPool.ReturnKey(activeKey, false)
 		return nil
 	}
 
-	log.Printf("所有 %d 次重试均失败。", maxRetries)
+	logger.Error("所有 %d 次重试均失败。", maxRetries)
 	if lastErr != nil {
 		return fmt.Errorf("所有 API Key 均尝试失败，最后一次错误: %w", lastErr)
 	}
@@ -196,13 +196,13 @@ func (s *GenAIService) NonStreamChat(ctx context.Context, req *model.ChatComplet
 		if err != nil {
 			lastErr = err
 			if errors.Is(err, ErrNoAvailableKeys) {
-				log.Println("无可用 Key，等待 Key 池释放...")
+				logger.Infoln("无可用 Key，等待 Key 池释放...")
 				time.Sleep(2 * time.Second)
 			}
 			continue
 		}
 
-		log.Printf("第 %d 次尝试 (非流式), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, req.Model)
+		logger.Info("第 %d 次尝试 (非流式), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, req.Model)
 		const url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBodyBytes))
 		if err != nil {
@@ -216,7 +216,7 @@ func (s *GenAIService) NonStreamChat(ctx context.Context, req *model.ChatComplet
 		if err != nil {
 			lastErr = fmt.Errorf("请求 Google API 失败 (Key ID: %d): %w", activeKey.ID, err)
 			s.keyPool.ReturnKey(activeKey, false)
-			log.Println(lastErr)
+			logger.Errorln(lastErr)
 			continue
 		}
 		defer resp.Body.Close()
@@ -224,12 +224,12 @@ func (s *GenAIService) NonStreamChat(ctx context.Context, req *model.ChatComplet
 		if err != nil {
 			lastErr = fmt.Errorf("读取响应体失败: %w", err)
 			s.keyPool.ReturnKey(activeKey, false)
-			log.Println(lastErr)
+			logger.Errorln(lastErr)
 			continue
 		}
 
 		if resp.StatusCode == http.StatusOK {
-			log.Printf("非流式请求成功 (Key ID: %d)", activeKey.ID)
+			logger.Info("非流式请求成功 (Key ID: %d)", activeKey.ID)
 			var successResp model.OpenAICompletionResponse
 			if err := json.Unmarshal(body, &successResp); err != nil {
 				s.keyPool.ReturnKey(activeKey, false)
@@ -241,7 +241,7 @@ func (s *GenAIService) NonStreamChat(ctx context.Context, req *model.ChatComplet
 
 		errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(body))
 		lastErr = errors.New(errorMsg)
-		log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+		logger.Error("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
 
 		isRateLimited := resp.StatusCode == http.StatusTooManyRequests
 		if !isRateLimited && resp.StatusCode >= 400 && resp.StatusCode < 500 {
@@ -249,7 +249,7 @@ func (s *GenAIService) NonStreamChat(ctx context.Context, req *model.ChatComplet
 		}
 		s.keyPool.ReturnKey(activeKey, isRateLimited)
 	}
-	log.Printf("所有 %d 次重试均失败。", maxRetries)
+	logger.Error("所有 %d 次重试均失败。", maxRetries)
 	if lastErr != nil {
 		return nil, fmt.Errorf("所有 API Key 均尝试失败，最后一次错误: %w", lastErr)
 	}
@@ -260,12 +260,12 @@ func (s *GenAIService) NonStreamChat(ctx context.Context, req *model.ChatComplet
 func (s *GenAIService) ListOpenAICompatibleModels(ctx context.Context) ([]byte, int, error) {
 	activeKey, err := s.keyPool.GetKey()
 	if err != nil {
-		log.Println("获取模型列表失败: 没有可用的API Key")
+		logger.Errorln("获取模型列表失败: 没有可用的API Key")
 		return nil, http.StatusInternalServerError, fmt.Errorf("没有可用的 API Key: %w", err)
 	}
 	defer s.keyPool.ReturnKey(activeKey, false) // Always return the key
 
-	log.Printf("正在使用 Key ID: %d 获取 OpenAI 模型列表", activeKey.ID)
+	logger.Info("正在使用 Key ID: %d 获取 OpenAI 模型列表", activeKey.ID)
 	const url = "https://generativelanguage.googleapis.com/v1beta/openai/models"
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -296,7 +296,7 @@ func (s *GenAIService) ListOpenAICompatibleModels(ctx context.Context) ([]byte, 
 		} else {
 			s.keyStore.Disable(activeKey.ID, errorReason)
 		}
-		log.Printf("因获取模型列表失败而处理 Key ID %d", activeKey.ID)
+		logger.Warn("因获取模型列表失败而处理 Key ID %d", activeKey.ID)
 	}
 
 	return body, resp.StatusCode, nil
@@ -305,7 +305,7 @@ func (s *GenAIService) ListOpenAICompatibleModels(ctx context.Context) ([]byte, 
 func (s *GenAIService) ListGeminiCompatibleModels(ctx context.Context, queryParams url.Values) ([]byte, int, error) {
 	activeKey, err := s.keyPool.GetKey()
 	if err != nil {
-		log.Println("获取模型列表失败: 没有可用的API Key")
+		logger.Errorln("获取模型列表失败: 没有可用的API Key")
 		return nil, http.StatusInternalServerError, fmt.Errorf("没有可用的 API Key: %w", err)
 	}
 	// Defer returning the key right away. It will be returned without cooldown.
@@ -313,7 +313,7 @@ func (s *GenAIService) ListGeminiCompatibleModels(ctx context.Context, queryPara
 	// but the deferred one will just be a no-op on an empty channel.
 	defer s.keyPool.ReturnKey(activeKey, false)
 
-	log.Printf("正在使用 Key ID: %d 获取 Gemini 模型列表", activeKey.ID)
+	logger.Info("正在使用 Key ID: %d 获取 Gemini 模型列表", activeKey.ID)
 	baseURL := "https://generativelanguage.googleapis.com/v1beta/models"
 	apiURL, _ := url.Parse(baseURL)
 	apiURL.RawQuery = queryParams.Encode()
@@ -344,7 +344,7 @@ func (s *GenAIService) ListGeminiCompatibleModels(ctx context.Context, queryPara
 		} else {
 			s.keyStore.Disable(activeKey.ID, errorReason)
 		}
-		log.Printf("因获取模型列表失败而处理 Key ID %d", activeKey.ID)
+		logger.Warn("因获取模型列表失败而处理 Key ID %d", activeKey.ID)
 	}
 
 	return body, resp.StatusCode, nil
@@ -365,7 +365,7 @@ func (s *GenAIService) GenerateContent(ctx context.Context, modelName string, re
 			continue
 		}
 
-		log.Printf("第 %d 次尝试 (Gemini GenerateContent), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
+		logger.Info("第 %d 次尝试 (Gemini GenerateContent), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
 		url_str := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", modelName)
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url_str, bytes.NewReader(reqBody))
@@ -394,14 +394,14 @@ func (s *GenAIService) GenerateContent(ctx context.Context, modelName string, re
 		}
 
 		if resp.StatusCode == http.StatusOK {
-			log.Printf("Gemini GenerateContent 请求成功 (Key ID: %d)", activeKey.ID)
+			logger.Info("Gemini GenerateContent 请求成功 (Key ID: %d)", activeKey.ID)
 			s.keyPool.ReturnKey(activeKey, false)
 			return respBody, resp.StatusCode, nil
 		}
 
 		errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(respBody))
 		lastErr = errors.New(errorMsg)
-		log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+		logger.Error("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
 
 		isRateLimited := resp.StatusCode == http.StatusTooManyRequests
 		if !isRateLimited && resp.StatusCode >= 400 && resp.StatusCode < 500 {
@@ -431,7 +431,7 @@ func (s *GenAIService) StreamGenerateContent(ctx context.Context, w io.Writer, m
 			continue
 		}
 
-		log.Printf("第 %d 次尝试 (Gemini Stream), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
+		logger.Info("第 %d 次尝试 (Gemini Stream), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
 		url_str := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse", modelName)
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url_str, bytes.NewReader(reqBody))
@@ -457,7 +457,7 @@ func (s *GenAIService) StreamGenerateContent(ctx context.Context, w io.Writer, m
 			body, _ := io.ReadAll(resp.Body)
 			errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(body))
 			lastErr = errors.New(errorMsg)
-			log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+			logger.Error("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
 
 			isRateLimited := resp.StatusCode == http.StatusTooManyRequests
 			if !isRateLimited && resp.StatusCode >= 400 && resp.StatusCode < 500 {
@@ -487,7 +487,7 @@ func (s *GenAIService) StreamGenerateContent(ctx context.Context, w io.Writer, m
 			continue
 		}
 
-		log.Printf("Gemini Stream 请求成功 (Key ID: %d), 流已结束。", activeKey.ID)
+		logger.Info("Gemini Stream 请求成功 (Key ID: %d), 流已结束。", activeKey.ID)
 		s.keyPool.ReturnKey(activeKey, false)
 		return nil
 	}
@@ -510,7 +510,7 @@ func (s *GenAIService) CountTokens(ctx context.Context, modelName string, reqBod
 			continue
 		}
 
-		log.Printf("第 %d 次尝试 (Gemini CountTokens), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
+		logger.Info("第 %d 次尝试 (Gemini CountTokens), 使用 Key ID: %d, 模型: %s", i+1, activeKey.ID, modelName)
 		url_str := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:countTokens", modelName)
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", url_str, bytes.NewReader(reqBody))
@@ -539,14 +539,14 @@ func (s *GenAIService) CountTokens(ctx context.Context, modelName string, reqBod
 		}
 
 		if resp.StatusCode == http.StatusOK {
-			log.Printf("Gemini CountTokens 请求成功 (Key ID: %d)", activeKey.ID)
+			logger.Info("Gemini CountTokens 请求成功 (Key ID: %d)", activeKey.ID)
 			s.keyPool.ReturnKey(activeKey, false)
 			return respBody, resp.StatusCode, nil
 		}
 
 		errorMsg := fmt.Sprintf("上游API错误 (HTTP %d): %s", resp.StatusCode, string(respBody))
 		lastErr = errors.New(errorMsg)
-		log.Printf("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
+		logger.Error("Key ID %d 请求失败: %s", activeKey.ID, errorMsg)
 
 		isRateLimited := resp.StatusCode == http.StatusTooManyRequests
 		if !isRateLimited && resp.StatusCode >= 400 && resp.StatusCode < 500 {
@@ -554,7 +554,7 @@ func (s *GenAIService) CountTokens(ctx context.Context, modelName string, reqBod
 		}
 		s.keyPool.ReturnKey(activeKey, isRateLimited)
 	}
-	log.Printf("所有 %d 次重试均失败。", maxRetries)
+	logger.Error("所有 %d 次重试均失败。", maxRetries)
 	if lastErr != nil {
 		return nil, http.StatusServiceUnavailable, fmt.Errorf("所有 API Key 均尝试失败，最后一次错误: %w", lastErr)
 	}

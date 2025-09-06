@@ -3,8 +3,8 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"gemini_polling/logger"
 	"gemini_polling/model" // <-- 注意导入路径的变化
-	"log"
 
 	"gorm.io/gorm"
 )
@@ -48,7 +48,7 @@ func (s *KeyStore) GetNextActiveKey() (*model.APIKey, error) {
 	case "sqlite": // 注意: gorm-sqlite驱动返回 "sqlite"
 		randomFunc = "RANDOM()"
 	default:
-		log.Printf("警告: 不支持的 Dialector '%s' 用于随机排序，将默认使用 RANDOM()", driverName)
+		logger.Warn("警告: 不支持的 Dialector '%s' 用于随机排序，将默认使用 RANDOM()", driverName)
 		randomFunc = "RANDOM()"
 	}
 	err := s.db.Where("enabled = ?", true).Order(randomFunc).First(&key).Error
@@ -110,9 +110,9 @@ func (s *KeyStore) SetEnabled(id uint, enabled bool) error {
 
 // Disable 是一个辅助函数，在API调用失败时可被调用
 func (s *KeyStore) Disable(id uint, reason string) {
-	log.Printf("正在禁用 Key ID %d，原因: %s", id, reason)
+	logger.Warn("正在禁用 Key ID %d，原因: %s", id, reason)
 	if err := s.SetEnabled(id, false); err != nil {
-		log.Printf("自动禁用 Key ID %d 失败: %v", id, err)
+		logger.Error("自动禁用 Key ID %d 失败: %v", id, err)
 	}
 }
 
