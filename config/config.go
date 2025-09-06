@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"gemini_polling/logger"
-	"log"
 	"os"
 	"strconv"
 	"strings"
