@@ -312,8 +312,14 @@ func (h *KeyHandler) GetKeyStats(c *gin.Context) {
 
 	bannedCount := h.keyPool.GetBannedKeyCount()
 
+	// The number of truly enabled keys is the total enabled in DB minus those temporarily banned.
+	trulyEnabledCount := enabledCount - int64(bannedCount)
+	if trulyEnabledCount < 0 {
+		trulyEnabledCount = 0 // Ensure it doesn't go below zero
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"enabled_count":  enabledCount,
+		"enabled_count":  trulyEnabledCount,
 		"disabled_count": disabledCount,
 		"banned_count":   bannedCount,
 	})

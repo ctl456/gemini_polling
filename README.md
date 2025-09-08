@@ -28,7 +28,7 @@
     *   **全自动健康检查**: 后台服务会**定期扫描所有 Key**（包括已启用和已禁用），自动禁用失效的 Key，并**自动重新启用**已恢复的 Key。
 
 *   **强大的 Web 管理后台**:
-    *   **仪表盘**: 集中管理所有 API Keys，可在“已启用”、“已禁用”、“临时禁用”状态间切换查看。
+    *   **仪表盘**: 集中管理所有 API Keys，可在“已启用”、“已禁用”、“临时禁用”状态间切换查看。仪表盘上的“已启用”计数会实时减去临时禁用的数量，精确显示**当前真正可用**的 Key 数量。
     *   **状态监控**: 在“临时禁用”列表中可查看被 429 限制的 Key 及其解禁倒计时。
     *   **批量操作**: 支持批量添加、删除、校验 Keys，批量添加时自动去重。
     *   **手动扫描**: 可在后台随时触发对所有 Key 的全面健康检查。
@@ -112,37 +112,13 @@ MYSQL_PASSWORD=your_mysql_password
 docker build -t gemini-polling .
 
 # 运行容器
-# sqlite3
-docker run -d --name gemini-app -p 8080:8080 \
-  -v $(pwd)/data:/app/data \
-  -e SERVER_PORT="8080" \
-  -e ADMIN_API_KEY="请务必修改为一个复杂的随机字符串" \
-  -e POLLING_API_KEY="sk-Tkxxxx(用于对话的密钥)" \
-  -e HEALTH_CHECK_CONCURRENCY="50" \
-  -e MAX_RETRIES="10" \
-  -e RATE_LIMIT_COOLDOWN="7200" \
-  -e DB_DRIVER="sqlite3" \
-  -e SQLITE_PATH="./data/data.db" \
-  --restart always \
-  gemini-polling
-
-# mysql
-docker run -d --name gemini-app -p 8080:8080 \
-  -v $(pwd)/data:/app/data \
-  -e SERVER_PORT="8080" \
-  -e ADMIN_API_KEY="请务必修改为一个复杂的随机字符串" \
-  -e POLLING_API_KEY="sk-Tkxxxx(用于对话的密钥)" \
-  -e HEALTH_CHECK_CONCURRENCY="50" \
-  -e MAX_RETRIES="10" \
-  -e RATE_LIMIT_COOLDOWN="7200" \
-  -e DB_DRIVER="mysql" \
-  -e MYSQL_HOST="127.0.0.1" \
-  -e MYSQL_PORT="3306" \
-  -e MYSQL_DBNAME="gemini_proxy" \
-  -e MYSQL_USER="root" \
-  -e MYSQL_PASSWORD="your_mysql_password" \
-  --restart always \
-  gemini-polling
+docker run -d --name gemini-app \
+    -p 8080:8080 \
+    -v $(pwd)/data:/app/data \
+    -v $(pwd)/logs:/app/logs \
+    --env-file ./.env \
+    --restart always \
+    gemini-polling
 ```
 * `-p 8080:8080`: 将容器的 8080 端口映射到主机的 8080 端口。
 * `-v ./data:/app/data`: 将主机当前目录下的 `data` 文件夹挂载到容器的 `/app/data` 目录，用于持久化 SQLite 数据库。

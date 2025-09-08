@@ -393,20 +393,19 @@ func (p *KeyPool) GetBannedKeysInfo() ([]BannedKeyInfo, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	p.cooldownKeys.Range(func(key, value interface{}) bool {
-		keyID := key.(uint)
-		bannedUntil := value.(time.Time)
-
-		if time.Now().Before(bannedUntil) {
-			if apiKey, ok := p.allKeys[keyID]; ok {
+	now := time.Now()
+	// Iterate over all known keys and check their stats
+	for keyID, key := range p.allKeys {
+		if stats, ok := p.keyStats[keyID]; ok {
+			// Check if the key is on cooldown and the cooldown period has not expired
+			if stats.IsOnCooldown && now.Before(stats.NextAvailableAt) {
 				results = append(results, BannedKeyInfo{
-					APIKey:      *apiKey,
-					BannedUntil: bannedUntil,
+					APIKey:      *key,
+					BannedUntil: stats.NextAvailableAt,
 				})
 			}
 		}
-		return true // continue iteration
-	})
+	}
 
 	return results, nil
 }
@@ -414,9 +413,16 @@ func (p *KeyPool) GetBannedKeysInfo() ([]BannedKeyInfo, error) {
 // GetBannedKeyCount returns the number of keys currently on cooldown.
 func (p *KeyPool) GetBannedKeyCount() int {
 	count := 0
-	p.cooldownKeys.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	now := time.Now()
+	for keyID := range p.allKeys {
+		if stats, ok := p.keyStats[keyID]; ok {
+			if stats.IsOnCooldown && now.Before(stats.NextAvailableAt) {
+				count++
+			}
+		}
+	}
 	return count
 }
